@@ -58,22 +58,31 @@ jobs:
           echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
           echo "BUILD=$((BUILD_NUMBER + 100))" >> "$GITHUB_ENV"
 
-      # Архив собираем без подписи, а подписываем для App Store при экспорте:
-      # так не нужен сертификат разработчика и зарегистрированные устройства.
-      - name: Архив (Release, без подписи)
+      # Сначала — обычный архив с автоматической подписью (стандартный путь Apple;
+      # нужен хотя бы один зарегистрированный iPhone/iPad в команде).
+      # Если не вышло — архив без подписи, а подпись для App Store ставится при экспорте.
+      - name: Архив (Release)
         run: |
-          set -o pipefail
           EXTRA=()
           if [ -n "$BUNDLE_ID" ]; then EXTRA+=("PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE_ID"); fi
-          xcodebuild -project Deberc.xcodeproj -scheme Deberc -configuration Release \
-            -destination 'generic/platform=iOS' \
-            -archivePath build/Deberc.xcarchive \
-            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            CODE_SIGNING_ALLOWED=NO \
-            CURRENT_PROJECT_VERSION="$BUILD" \
-            "${EXTRA[@]}" \
-            archive 2>&1 | tee build-archive.log | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)" || true
-          grep -q "ARCHIVE SUCCEEDED" build-archive.log
+          COMMON=(-project Deberc.xcodeproj -scheme Deberc -configuration Release
+                  -destination 'generic/platform=iOS' -archivePath build/Deberc.xcarchive
+                  DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CURRENT_PROJECT_VERSION="$BUILD" "${EXTRA[@]}")
+          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH"
+                -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+
+          if xcodebuild "${COMMON[@]}" "${AUTH[@]}" CODE_SIGN_STYLE=Automatic archive > build-archive.log 2>&1 \
+             && grep -q "ARCHIVE SUCCEEDED" build-archive.log; then
+            echo "Архив собран и подписан."
+          else
+            grep -E "error:" build-archive.log | head -20 || true
+            echo "::warning::Подписанный архив не собрался (частая причина — в команде нет зарегистрированных устройств). Собираю без подписи; подпись для App Store будет при экспорте."
+            rm -rf build/Deberc.xcarchive
+            xcodebuild "${COMMON[@]}" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+              archive > build-archive-unsigned.log 2>&1 || true
+            grep -E "error:" build-archive-unsigned.log | head -20 || true
+            grep -q "ARCHIVE SUCCEEDED" build-archive-unsigned.log
+          fi
 
       - name: Загрузка в App Store Connect
         run: |
@@ -121,5 +130,6 @@ jobs:
           name: testflight-logs
           path: |
             build-archive.log
+            build-archive-unsigned.log
             build-export.log
           if-no-files-found: ignore

@@ -23,6 +23,9 @@ struct SettingsView: View {
                 } footer: {
                     Text("Изменения правил действуют с новой партии.")
                 }
+                Section {
+                    LabeledContent("Версия", value: appVersion)
+                }
             }
             .navigationTitle("Настройки")
             .navigationBarTitleDisplayMode(.inline)
@@ -36,6 +39,13 @@ struct SettingsView: View {
                 Button("Отмена", role: .cancel) {}
             }
         }
+    }
+
+    private var appVersion: String {
+        let info = Bundle.main.infoDictionary
+        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info?["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
     }
 
     // MARK: - Разделы

@@ -108,8 +108,13 @@ struct GameView: View {
                 cardWidth: cardWidth * 0.95)
 
             if deal.phase != .finished {
+                let isBidding: Bool = {
+                    if case .bidding = deal.phase { return true }
+                    return false
+                }()
                 HStack {
-                    DeckView(openCard: deal.openCard, bottomCard: bottom, showsStock: true, cardWidth: cardWidth * 0.62)
+                    DeckView(openCard: deal.openCard, bottomCard: bottom, showsStock: true,
+                             cardWidth: cardWidth * (isBidding ? 0.85 : 0.62))
                     Spacer()
                 }
                 .padding(.leading, 12)
