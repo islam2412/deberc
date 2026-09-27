@@ -78,6 +78,7 @@ struct TableTopBar: View {
         return ViewThatFits(in: .horizontal) {
             TrumpBadge(trump: deal.trump, detail: trumpDetail, biddingRound: round, height: metrics.topBarHeight)
             TrumpBadge(trump: deal.trump, detail: nil, biddingRound: round, height: metrics.topBarHeight)
+            TrumpBadge(trump: deal.trump, detail: nil, biddingRound: round, height: metrics.topBarHeight, compact: true)
         }
     }
 

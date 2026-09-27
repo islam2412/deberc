@@ -474,10 +474,12 @@ struct TrumpBadge: View {
     /// Круг торговли: 1, 2; 0 — все спасовали.
     let biddingRound: Int?
     let height: CGFloat
+    /// Узкий вариант для тесной верхней полосы: только масть (или круг торговли).
+    var compact: Bool = false
 
     var body: some View {
         content
-            .padding(.horizontal, 10)
+            .padding(.horizontal, compact ? 6 : 10)
             .padding(.vertical, 4)
             .frame(height: height - 6)
             .tableSurface(cornerRadius: 14, highlighted: trump != nil)
@@ -487,7 +489,17 @@ struct TrumpBadge: View {
 
     @ViewBuilder
     private var content: some View {
-        if let trump {
+        if compact {
+            if let trump {
+                SuitBadge(suit: trump, size: min(34, height - 16))
+            } else {
+                Text(roundText)
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Theme.tableText)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        } else if let trump {
             HStack(spacing: 8) {
                 SuitBadge(suit: trump, size: min(34, height - 16))
                 VStack(alignment: .leading, spacing: 0) {

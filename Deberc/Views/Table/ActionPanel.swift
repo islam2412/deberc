@@ -53,13 +53,19 @@ struct ActionPanel: View {
                 Button {
                     store.perform(.take)
                 } label: {
-                    HStack(spacing: 6) {
-                        Text("Беру")
-                        SuitBadge(suit: suit, size: 24)
-                        Text(suit.name)
+                    // На узком экране с крупным шрифтом название масти не помещается — остаётся «Беру ♣».
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 6) {
+                            Text("Беру")
+                            SuitBadge(suit: suit, size: 24)
+                            Text(suit.name)
+                        }
+                        HStack(spacing: 6) {
+                            Text("Беру")
+                            SuitBadge(suit: suit, size: 24)
+                        }
                     }
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(TableButtonStyle(prominent: true))
