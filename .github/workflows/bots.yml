@@ -1,0 +1,64 @@
+name: Турнир ботов
+
+# Сила и статистика ИИ: турнир уровней друг против друга и самоигра.
+# Движок не зависит от iOS, поэтому гоняем на Linux — быстрее и дешевле macOS.
+# Запускается сам при правках ИИ и вручную: Actions → Турнир ботов → Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      filter:
+        description: "Какие тесты гонять (--filter для swift test)"
+        type: string
+        default: "BotTests/testBenchmark|BotStatistics"
+      experiment:
+        description: "Ещё и эксперименты с настройками ботов (DEBERC_EXPERIMENT, долго)"
+        type: boolean
+        default: false
+  push:
+    branches: [main, "claude/**"]
+    paths:
+      - "DebercKit/Sources/DebercKit/AI/**"
+      - ".github/workflows/bots.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bots-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tournament:
+    name: Турнир (Linux, release)
+    runs-on: ubuntu-latest
+    container: swift:6.4-noble
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Турнир и статистика
+        working-directory: DebercKit
+        env:
+          DEBERC_BENCH: "1"
+          DEBERC_STATS: "1"
+          DEBERC_EXPERIMENT: ${{ inputs.experiment && '1' || '' }}
+          FILTER: ${{ inputs.filter || 'BotTests/testBenchmark|BotStatistics' }}
+        run: |
+          [ -n "$DEBERC_EXPERIMENT" ] || unset DEBERC_EXPERIMENT
+          swift test -c release -Xswiftc -enable-testing --filter "$FILTER" 2>&1 | tee "$RUNNER_TEMP/bots.log"
+
+      - name: Итоги в сводку
+        if: always()
+        run: |
+          {
+            echo "### Турнир ботов"
+            echo
+            echo '```'
+            grep -E "^(BENCH|STATS|EXP|LADDER|PAIR|DEALS|TIME|STYLE|GIFT)" "$RUNNER_TEMP/bots.log" || echo "Строк с результатами нет — см. лог шага"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,96 @@
+name: Скриншоты для App Store
+
+# Полноразмерные скриншоты для App Store Connect: iPhone 6,9″ (1320×2868) и iPad 13″ (2064×2752),
+# русский язык, строка состояния 9:41, полный заряд. Плюс docs/preview.png для README.
+# Запуск: Actions → Скриншоты для App Store → Run workflow. Результат — в артефактах.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  shots:
+    name: Скриншоты · ${{ matrix.title }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kind: iphone-big
+            title: iPhone 6,9″
+          - kind: ipad-13
+            title: iPad 13″
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Xcode
+        run: bash scripts/select-xcode.sh 26
+
+      - name: Симулятор
+        run: bash scripts/simulator-smoke-test.sh select "${{ matrix.kind }}" latest
+
+      - name: Сборка (Release)
+        run: |
+          mkdir -p build
+          xcodebuild -project Deberc.xcodeproj -scheme Deberc -configuration Release \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES \
+            build > build/simulator.log 2>&1 || { grep -E -B2 -A8 "error:" build/simulator.log | head -120; exit 1; }
+
+      - name: Съёмка
+        env:
+          KEEP_PNG: "1"
+          SCENARIOS: screens autoplay2 summary
+          SCREENS: menu table scoresheet stats rules settings
+          LEVEL_2P: master
+        run: |
+          bash scripts/simulator-smoke-test.sh run \
+            build/DerivedData/Build/Products/Release-iphonesimulator/Deberc.app "${{ matrix.kind }}" build/appstore
+
+      - name: Скриншоты
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: appstore-${{ matrix.kind }}
+          path: |
+            build/appstore/*.png
+            build/appstore/*.log
+          retention-days: 30
+          if-no-files-found: ignore
+
+  preview:
+    name: docs/preview.png
+    needs: shots
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: appstore-iphone-big
+          path: shots
+
+      - name: Сборка preview.png
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pillow
+          "$RUNNER_TEMP/venv/bin/python" scripts/make-preview.py --out preview.png --radius 28 \
+            "Меню=shots/iphone-big-screen-menu.png" \
+            "Торговля=shots/iphone-big-screen-table.png" \
+            "Розыгрыш=shots/iphone-big-auto2p-03.png" \
+            "Итоги сдачи=shots/iphone-big-screen-summary.png"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: preview
+          path: preview.png
+          retention-days: 30

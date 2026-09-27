@@ -138,20 +138,44 @@ public struct Card: Hashable, Codable, Sendable, Identifiable, CustomStringConve
     }
 }
 
+public extension Suit {
+    /// Порядок мастей на руке слева направо: козырь первым, дальше цвета чередуются
+    /// (после чёрного козыря — красная масть, после красного — чёрная).
+    /// Порядок постоянный для козыря и не прыгает, когда какая-то масть кончается.
+    /// Без козыря: ♠ ♥ ♣ ♦.
+    static func displayOrder(trump: Suit?) -> [Suit] {
+        let base: [Suit] = [.spades, .hearts, .clubs, .diamonds]
+        guard let trump else { return base }
+        let others = base.filter { $0 != trump }
+        let opposite = others.filter { $0.isRed != trump.isRed }
+        let same = others.filter { $0.isRed == trump.isRed }
+        // Козырь, масть другого цвета, вторая масть цвета козыря, вторая масть другого цвета.
+        return [trump] + [opposite.first, same.first, opposite.dropFirst().first].compactMap { $0 }
+    }
+}
+
 public extension Array where Element == Card {
-    /// Карты, отсортированные для показа на руке: по мастям, внутри — по старшинству.
+    /// Карты, отсортированные для показа на руке: козыри слева, цвета мастей чередуются
+    /// (см. `Suit.displayOrder(trump:)`), внутри масти — по старшинству
+    /// (козыри: В 9 Т 10 К Д 8 7; остальные: Т 10 К Д В 9 8 7).
+    /// Пока козыря нет — по порядку для комбинаций (Т К Д В 10 9 8 7).
     func sortedForDisplay(trump: Suit?) -> [Card] {
-        let suitOrder: [Suit] = [.spades, .hearts, .clubs, .diamonds]
-        func suitKey(_ s: Suit) -> Int {
-            if let trump, s == trump { return -1 }
-            return suitOrder.firstIndex(of: s) ?? 0
+        sortedForDisplay(trump: trump, naturalOrder: false)
+    }
+
+    /// То же, но при `naturalOrder` внутри масти карты идут в порядке для комбинаций
+    /// (Т К Д В 10 9 8 7) — так терцы и полтинники лежат подряд.
+    func sortedForDisplay(trump: Suit?, naturalOrder: Bool) -> [Card] {
+        let order = Suit.displayOrder(trump: trump)
+        func suitKey(_ s: Suit) -> Int { order.firstIndex(of: s) ?? order.count }
+        func strength(_ card: Card) -> Int {
+            if naturalOrder { return card.rank.rawValue }
+            guard let trump else { return card.rank.rawValue }
+            return card.power(trump: trump)
         }
         return sorted { a, b in
             if a.suit != b.suit { return suitKey(a.suit) < suitKey(b.suit) }
-            let t = trump ?? .spades
-            let pa = trump == nil ? a.rank.rawValue : a.power(trump: t)
-            let pb = trump == nil ? b.rank.rawValue : b.power(trump: t)
-            return pa > pb
+            return strength(a) > strength(b)
         }
     }
 }

@@ -8,11 +8,47 @@ public enum Narrator {
         seat == humanSeat ? "Вы" : names[seat]
     }
 
+    /// «Вы и Саша», «Саша и Миша».
+    static func nameList(_ seats: [Int], names: [String], humanSeat: Int?) -> String {
+        seats.map { name($0, names: names, humanSeat: humanSeat) }.joined(separator: " и ")
+    }
+
+    // MARK: - Числа
+
+    /// Число с настоящим минусом (U+2212): «47», «−100».
+    public static func number(_ n: Int) -> String {
+        n < 0 ? "\u{2212}\(n.magnitude)" : "\(n)"
+    }
+
+    /// Изменение счёта со знаком: «+47», «−100», «0».
+    public static func signed(_ n: Int) -> String {
+        n > 0 ? "+\(n)" : number(n)
+    }
+
+    /// Очки со склонением: «1 очко», «3 очка», «47 очков», «−100 очков».
+    public static func points(_ n: Int) -> String {
+        let a = n.magnitude
+        let last = a % 10, lastTwo = a % 100
+        let word: String
+        if (11...14).contains(lastTwo) {
+            word = "очков"
+        } else if last == 1 {
+            word = "очко"
+        } else if (2...4).contains(last) {
+            word = "очка"
+        } else {
+            word = "очков"
+        }
+        return "\(number(n)) \(word)"
+    }
+
     /// «до 701 очка», «до 500 очков».
     public static func pointsGenitive(_ n: Int) -> String {
-        let last = abs(n) % 10, lastTwo = abs(n) % 100
+        let last = n.magnitude % 10, lastTwo = n.magnitude % 100
         return last == 1 && lastTwo != 11 ? "\(n) очка" : "\(n) очков"
     }
+
+    // MARK: - Торговля и объявления
 
     /// Реплика игрока при торговле.
     public static func bidText(_ bid: Bid) -> String {
@@ -32,6 +68,23 @@ public enum Narrator {
         let ranks = meld.cards.map(\.rank.symbol).joined(separator: "-")
         return "\(meld.name(rules)) \(ranks)\(meld.suit.symbol)"
     }
+
+    /// «играете вы» / «играет Саша» — для подписи сдачи.
+    public static func bidderPhrase(seat: Int, names: [String], humanSeat: Int?) -> String {
+        seat == humanSeat ? "играете вы" : "играет \(names[seat])"
+    }
+
+    /// Подпись сдачи: «Сдача 3 · играет Саша ♥ (обязы)». Для пересдач — только номер.
+    public static func dealCaption(_ score: DealScore, names: [String], humanSeat: Int?) -> String {
+        var text = "Сдача \(score.number)"
+        if score.wasPlayed, let bidder = score.bidder, let trump = score.trump {
+            text += " · \(bidderPhrase(seat: bidder, names: names, humanSeat: humanSeat)) \(trump.symbol)"
+            if score.forced { text += " (обязы)" }
+        }
+        return text
+    }
+
+    // MARK: - События сдачи
 
     /// Сообщение о событии для всплывающей подсказки (nil — не показывать).
     public static func message(for event: DealEvent, names: [String], humanSeat: Int?, rules: RuleSet) -> String? {
@@ -68,6 +121,24 @@ public enum Narrator {
         }
     }
 
+    /// То же, но с учётом состояния партии после события (`match` — уже после хода):
+    /// при пересдаче предупреждает, что следующая сдача — на обязах, и кто играет.
+    public static func message(for event: DealEvent, in match: Match, humanSeat: Int?) -> String? {
+        guard var text = message(for: event, names: match.names, humanSeat: humanSeat, rules: match.rules) else {
+            return nil
+        }
+        switch event {
+        case .allPassed, .fourSevens:
+            if !match.isOver, match.needsNewDeal, match.nextDealIsForced {
+                let dealer = match.upcomingDealer
+                text += ". Следующая — на обязах: \(bidderPhrase(seat: dealer, names: match.names, humanSeat: humanSeat))"
+            }
+        default:
+            break
+        }
+        return text
+    }
+
     /// Кто записывает комбинации перед розыгрышем.
     public static func meldSummary(_ decl: Declarations, names: [String], humanSeat: Int?, rules: RuleSet) -> String? {
         guard let winner = decl.meldWinner else { return nil }
@@ -80,6 +151,31 @@ public enum Narrator {
         }
         return text
     }
+
+    /// Какие комбинации засчитаны в сдаче: «Саша: полтинник 10-В-Д-К♣ · Вы: бэла».
+    /// nil — ничего не засчитано или сохранение старое (нет объявлений).
+    public static func meldLine(_ score: DealScore, names: [String], humanSeat: Int?, rules: RuleSet) -> String? {
+        guard let decl = score.declarations else { return nil }
+        var parts: [(seat: Int, items: [String])] = []
+        func add(_ seat: Int, _ item: String) {
+            if let i = parts.firstIndex(where: { $0.seat == seat }) {
+                parts[i].items.append(item)
+            } else {
+                parts.append((seat, [item]))
+            }
+        }
+        if let w = decl.meldWinner, score.meldPoints.indices.contains(w), score.meldPoints[w] > 0 {
+            for meld in decl.winnerMelds { add(w, meldTitle(meld, rules: rules)) }
+        }
+        if let b = decl.bellaSeat, score.bellaPoints.indices.contains(b), score.bellaPoints[b] > 0 {
+            add(b, "бэла")
+        }
+        guard !parts.isEmpty else { return nil }
+        return parts.map { "\(name($0.seat, names: names, humanSeat: humanSeat)): \($0.items.joined(separator: ", "))" }
+            .joined(separator: " · ")
+    }
+
+    // MARK: - Итоги сдачи
 
     /// Заголовок итогов сдачи.
     public static func outcomeTitle(_ score: DealScore, names: [String], humanSeat: Int?) -> String {
@@ -101,48 +197,110 @@ public enum Narrator {
         }
     }
 
-    /// Пояснения к итогам сдачи: штрафы, висячие очки и т. п.
+    /// Пояснения к итогам сдачи: куда ушли очки, висячие, сгоревшие комбинации, штрафы
+    /// и предупреждения о следующем штрафе, ничья выше цели. Конец партии определяется
+    /// по счёту после сдачи (`totalsAfter`) — как в `Match`.
     public static func outcomeNotes(_ score: DealScore, names: [String], humanSeat: Int?, rules: RuleSet) -> [String] {
         var notes: [String] = []
         let n = score.change.count
+        func who(_ seat: Int) -> String { name(seat, names: names, humanSeat: humanSeat) }
+        let top = score.totalsAfter.max() ?? 0
+        let leaders = (0..<n).filter { score.totalsAfter[$0] == top }
+        let reachedTarget = top >= rules.targetScore
+        let matchOver = reachedTarget && leaders.count == 1
+        let potBurnedText = "Висячие очки (\(score.potAfter)) не разыграны — партия окончена, они сгорают"
+        let potRule = "их заберёт тот, кто наберёт больше всех в следующей сдаче"
+
         switch score.outcome {
         case .bait:
-            if rules.baitTransfer == .toOpponent, let b = score.bidder {
-                let receivers = (0..<n).filter { $0 != b && score.written[$0] > score.raw[$0] }
-                let list = receivers.map { name($0, names: names, humanSeat: humanSeat) }.joined(separator: " и ")
-                if !list.isEmpty {
-                    notes.append("Очки играющего (\(score.raw[b])) получает: \(list)")
-                }
-            } else {
+            if rules.baitTransfer == .burn {
                 notes.append("Очки играющего сгорают")
+            } else if let b = score.bidder {
+                let receivers = (0..<n).filter { $0 != b && score.written[$0] > score.raw[$0] }
+                let amount = score.raw[b]
+                if receivers.count == 1 {
+                    let r = receivers[0]
+                    notes.append(r == humanSeat
+                        ? "Очки играющего (\(amount)) получаете вы"
+                        : "Очки играющего (\(amount)) получает \(names[r])")
+                } else if receivers.count > 1 {
+                    notes.append("Очки играющего (\(amount)) делят пополам: \(nameList(receivers, names: names, humanSeat: humanSeat))")
+                }
             }
         case .hanging:
-            notes.append("\(score.potAdded) очк. висят — их заберёт выигравший следующую сдачу")
+            if matchOver {
+                notes.append(potBurnedText)
+            } else if score.potAfter > score.potAdded {
+                notes.append("Очки играющего (\(score.potAdded)) тоже повисли, всего висит \(score.potAfter) — \(potRule)")
+            } else {
+                notes.append("Очки играющего (\(score.potAdded)) висят — \(potRule)")
+            }
         case .fourSevens:
-            if let s = score.fourSevensSeat, score.bonus[s] > 0 {
-                notes.append("\(name(s, names: names, humanSeat: humanSeat)): +\(score.bonus[s]) за четыре семёрки")
+            if let s = score.fourSevensSeat, score.bonus.indices.contains(s), score.bonus[s] > 0 {
+                notes.append("\(who(s)): +\(score.bonus[s]) за четыре семёрки")
             }
         default:
             break
         }
+
         for seat in 0..<n where score.potAwarded[seat] > 0 {
-            notes.append("\(name(seat, names: names, humanSeat: humanSeat)): +\(score.potAwarded[seat]) висячих очков")
+            let verb = seat == humanSeat ? "забираете" : "забирает"
+            notes.append("\(who(seat)) \(verb) висячие очки: +\(score.potAwarded[seat])")
         }
+
+        // Комбинации и бэла без единой взятки не пишутся — объясняем, куда делись объявленные очки.
+        if let w = score.burnedMeldSeat, let decl = score.declarations, decl.meldPoints(for: w, rules: rules) > 0 {
+            let list = decl.winnerMelds.map { meldTitle($0, rules: rules) }.joined(separator: ", ")
+            var text = "\(who(w)): \(list) не в зачёт — ни одной взятки"
+            if decl.melds.enumerated().contains(where: { $0.offset != w && !$0.element.isEmpty }) {
+                text += "; младшие комбинации других тоже не пишутся"
+            }
+            notes.append(text)
+        }
+        if let b = score.burnedBellaSeat, rules.bellaPoints > 0 {
+            notes.append("\(who(b)): бэла не в зачёт — ни одной взятки")
+        }
+
+        let countedBait = score.outcome == .bait || (score.outcome == .hanging && rules.hangingCountsAsBait)
         for seat in 0..<n {
-            let who = name(seat, names: names, humanSeat: humanSeat)
+            let w = who(seat)
             if score.baitPenalty[seat] {
-                notes.append("\(who): штраф −\(rules.baitPenaltyPoints) за \(rules.baitPenaltyEvery)-й байт")
+                let count = score.baitCountsAfter?[seat] ?? rules.baitPenaltyEvery
+                notes.append("\(w): \(count)-й байт — штраф \(number(-rules.baitPenaltyPoints))")
+            } else if countedBait, seat == score.bidder, let counts = score.baitCountsAfter, rules.baitPenaltyEvery > 1 {
+                let count = counts[seat], every = rules.baitPenaltyEvery
+                if count % every == every - 1 {
+                    notes.append("\(w): \(count)-й байт за партию — следующий со штрафом \(number(-rules.baitPenaltyPoints))")
+                } else {
+                    notes.append("\(w): \(count)-й байт за партию")
+                }
             }
             if score.nakedPenalty[seat] {
-                notes.append("\(who): штраф −\(rules.nakedPenaltyPoints) — голый \(rules.nakedPenaltyEvery)-й раз")
+                let count = score.nakedCountsAfter?[seat] ?? rules.nakedPenaltyEvery
+                notes.append("\(w): ни одной взятки, голый \(count)-й раз — штраф \(number(-rules.nakedPenaltyPoints))")
             } else if score.naked[seat] {
-                notes.append("\(who): голый (без взяток)")
+                var text = "\(w): ни одной взятки (голый)"
+                if let counts = score.nakedCountsAfter, rules.nakedPenaltyEvery > 1,
+                   counts[seat] % rules.nakedPenaltyEvery == rules.nakedPenaltyEvery - 1 {
+                    text += " — в следующий раз штраф \(number(-rules.nakedPenaltyPoints))"
+                }
+                notes.append(text)
             }
         }
+
         if score.potAfter > 0 && score.outcome != .hanging {
-            notes.append("Висят \(score.potAfter) очк.")
+            notes.append(matchOver ? potBurnedText : "Висячие очки (\(score.potAfter)) переходят в следующую сдачу")
+        }
+        if reachedTarget && !matchOver {
+            notes.append("\(nameList(leaders, names: names, humanSeat: humanSeat)): по \(top) — поровну, играется ещё одна сдача")
         }
         return notes
+    }
+
+    /// Итог партии без рода глагола: «Вы выиграли партию!» / «Победа: Саша». nil — партия идёт.
+    public static func matchResult(_ match: Match, humanSeat: Int?) -> String? {
+        guard let w = match.winner else { return nil }
+        return w == humanSeat ? "Вы выиграли партию!" : "Победа: \(match.names[w])"
     }
 
     /// Короткая пометка для строки записи: Б, ВБ, 4×7 и т. п.
@@ -154,6 +312,37 @@ public enum Narrator {
         case .tie: return "="
         case .allPassed: return "пас"
         case .fourSevens: return "4×7"
+        }
+    }
+
+    // MARK: - Ход картой
+
+    /// Почему игрок `seat` не может сейчас пойти картой `card`: учитывает масть хода,
+    /// обязанность бить козырем и перебивать старшим. Пустая строка — ходить можно.
+    public static func illegalCardReason(deal: Deal, seat: Int, card: Card) -> String {
+        switch deal.phase {
+        case .bidding: return "Сейчас идёт торговля"
+        case .exchange: return "Сначала решите, менять ли козырную семёрку"
+        case .finished: return "Сдача окончена"
+        case .playing: break
+        }
+        guard seat == deal.turn else { return "Сейчас не ваш ход" }
+        guard let trump = deal.trump, deal.hands.indices.contains(seat) else { return "Так сейчас нельзя" }
+        let hand = deal.hands[seat]
+        guard hand.contains(card) else { return "Этой карты нет на руке" }
+        let trick = deal.currentTrick.cards
+        switch PlayRules.violation(of: card, hand: hand, trick: trick, trump: trump, rules: deal.rules) {
+        case nil:
+            return ""
+        case .mustFollowSuit(let suit):
+            return suit == trump
+                ? "Зашли с козыря — нужно ходить козырем \(suit.symbol)"
+                : "Нужно ходить в масть \(suit.symbol)"
+        case .mustTrump(let t):
+            let led = trick.first?.suit
+            return led.map { "Масти \($0.symbol) нет — нужно бить козырем \(t.symbol)" } ?? "Нужно бить козырем \(t.symbol)"
+        case .mustOvertrump(let over):
+            return "Нужно перебить: козырь старше \(over)"
         }
     }
 }

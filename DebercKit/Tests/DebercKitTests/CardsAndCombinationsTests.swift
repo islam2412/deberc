@@ -44,6 +44,35 @@ final class CardsTests: XCTestCase {
         XCTAssertEqual(hand.first, c("Вч"))
         XCTAssertEqual(hand[1], c("9ч"))
     }
+
+    func testDisplayOrderAlternatesSuitColors() {
+        for trump in Suit.allCases {
+            let order = Suit.displayOrder(trump: trump)
+            XCTAssertEqual(order.first, trump, "Козыри — слева")
+            XCTAssertEqual(Set(order), Set(Suit.allCases))
+            for i in 1..<order.count {
+                XCTAssertNotEqual(order[i].isRed, order[i - 1].isRed, "Соседние масти разного цвета при козыре \(trump)")
+            }
+        }
+        XCTAssertEqual(Suit.displayOrder(trump: .clubs), [.clubs, .hearts, .spades, .diamonds])
+        XCTAssertEqual(Suit.displayOrder(trump: .hearts), [.hearts, .spades, .diamonds, .clubs])
+        XCTAssertEqual(Suit.displayOrder(trump: nil), [.spades, .hearts, .clubs, .diamonds])
+    }
+
+    func testDisplaySortingFromScreenshot() {
+        // Рука со скриншота аудита: козырь ♣, пики и трефы больше не стоят рядом.
+        let hand = cards("10п Кп Дп Вп 8п Вч 8б Дт").sortedForDisplay(trump: .clubs)
+        XCTAssertEqual(hand, cards("Дт Вч 10п Кп Дп Вп 8п 8б"))
+        let trumps = cards("7т Тт Вт 9т 10т").sortedForDisplay(trump: .clubs)
+        XCTAssertEqual(trumps, cards("Вт 9т Тт 10т 7т"), "Козыри по старшинству: В 9 Т 10 … 7")
+    }
+
+    func testDisplaySortingNaturalOrderShowsRuns() {
+        let hand = cards("10п Кп Дп Вп 8п").sortedForDisplay(trump: .clubs, naturalOrder: true)
+        XCTAssertEqual(hand, cards("Кп Дп Вп 10п 8п"))
+        let noTrump = cards("9б Кп Тч 7п").sortedForDisplay(trump: nil)
+        XCTAssertEqual(noTrump, cards("Кп 7п Тч 9б"))
+    }
 }
 
 final class CombinationsTests: XCTestCase {
@@ -132,6 +161,21 @@ final class CombinationsTests: XCTestCase {
         XCTAssertFalse(Combinations.hasBella(cards("Кч Дп 7п"), trump: .hearts))
     }
 
+    func testBellaCardsExcludedFromRunsWhenRuleOff() {
+        var r = rules
+        r.bellaInMelds = false
+        let hand = cards("10ч Вч Дч Кч 7п 8т 9б Тп 7б")
+        XCTAssertEqual(Combinations.melds(in: hand, trump: .hearts, rules: rules), [Meld(suit: .hearts, low: .ten, length: 4)])
+        XCTAssertEqual(Combinations.melds(in: hand, trump: .hearts, rules: r), [], "10-В без короля и дамы — не терц")
+        // Без бэлы (козырь другой) король и дама в последовательности участвуют.
+        XCTAssertEqual(Combinations.melds(in: hand, trump: .spades, rules: r), [Meld(suit: .hearts, low: .ten, length: 4)])
+        let decl = Combinations.declarations(hands: [hand, cards("7ч 8ч 9ч Тч 8п 9п 10п Вп Дп")],
+                                             trump: .hearts, rules: r, priority: [1, 0])
+        XCTAssertEqual(decl.bellaSeat, 0)
+        XCTAssertEqual(decl.melds[0], [])
+        XCTAssertEqual(decl.meldWinner, 1)
+    }
+
     func testBellaCardsMayBePartOfRun() {
         let hand = cards("Вч Дч Кч 7п 8т 9б Тп 10т 7б")
         let decl = Combinations.declarations(hands: [hand, cards("7ч 8ч 9ч 10ч Тч 8п 9п 10п Вп")],
@@ -143,6 +187,29 @@ final class CombinationsTests: XCTestCase {
 
 final class PlayRulesTests: XCTestCase {
     let rules = RuleSet.house
+
+    func testViolationReasons() {
+        // Есть масть хода — нужно ходить в неё.
+        XCTAssertEqual(PlayRules.violation(of: c("Вп"), hand: cards("7ч Тч Вп"), trick: [c("Кч")], trump: .spades, rules: rules),
+                       .mustFollowSuit(.hearts))
+        // Масти нет — нужно бить козырем.
+        XCTAssertEqual(PlayRules.violation(of: c("9т"), hand: cards("7п Вп 9т"), trick: [c("Кч")], trump: .spades, rules: rules),
+                       .mustTrump(.spades))
+        // Допустимая карта — нет причины.
+        XCTAssertNil(PlayRules.violation(of: c("7п"), hand: cards("7п Вп 9т"), trick: [c("Кч"), c("Тп")], trump: .spades, rules: rules))
+        // Правило «перебивать всегда»: нужен козырь старше туза.
+        var strict = rules
+        strict.overtrump = .always
+        XCTAssertEqual(PlayRules.violation(of: c("7п"), hand: cards("7п Вп 9т"), trick: [c("Кч"), c("Тп")], trump: .spades, rules: strict),
+                       .mustOvertrump(over: c("Тп")))
+        // Ход с козыря при «перебивать на ход с козыря»: младший козырь нельзя, некозырь — нужно в масть.
+        var trumpLead = rules
+        trumpLead.overtrump = .trumpLeadOnly
+        XCTAssertEqual(PlayRules.violation(of: c("7п"), hand: cards("7п Вп 9т"), trick: [c("Тп")], trump: .spades, rules: trumpLead),
+                       .mustOvertrump(over: c("Тп")))
+        XCTAssertEqual(PlayRules.violation(of: c("9т"), hand: cards("7п Вп 9т"), trick: [c("Тп")], trump: .spades, rules: trumpLead),
+                       .mustFollowSuit(.spades))
+    }
 
     func testMustFollowSuit() {
         let hand = cards("7ч Тч Вп 9т")

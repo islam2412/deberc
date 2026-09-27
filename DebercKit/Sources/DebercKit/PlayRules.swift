@@ -27,6 +27,29 @@ public enum PlayRules {
         return hand
     }
 
+    /// Почему картой ходить нельзя.
+    public enum Violation: Equatable, Sendable {
+        /// Масть хода есть на руке — нужно ходить в неё.
+        case mustFollowSuit(Suit)
+        /// Масти хода нет, козырь есть — нужно бить козырем.
+        case mustTrump(Suit)
+        /// Нужен козырь старше уже лежащего `over` (правило «перебивать»).
+        case mustOvertrump(over: Card)
+    }
+
+    /// Причина, по которой картой `card` сейчас ходить нельзя (nil — ходить можно).
+    public static func violation(of card: Card, hand: [Card], trick: [Card], trump: Suit, rules: RuleSet) -> Violation? {
+        let legal = legalCards(hand: hand, trick: trick, trump: trump, rules: rules)
+        guard !legal.contains(card), let led = trick.first?.suit else { return nil }
+        if hand.contains(where: { $0.suit == led }) && card.suit != led {
+            return .mustFollowSuit(led)
+        }
+        // Козырь, но младше лежащего: по правилам нужно перебить.
+        let highestTrump = trick.filter { $0.suit == trump }.max { $0.power(trump: trump) < $1.power(trump: trump) }
+        if card.suit == trump, let highestTrump { return .mustOvertrump(over: highestTrump) }
+        return .mustTrump(trump)
+    }
+
     /// Бьёт ли карта `card` текущую старшую карту взятки `best` при масти хода `led`.
     public static func beats(_ card: Card, _ best: Card, led: Suit, trump: Suit) -> Bool {
         if card.suit == best.suit { return card.power(trump: trump) > best.power(trump: trump) }

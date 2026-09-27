@@ -1,82 +1,285 @@
 name: CI
 
+# Каждый push в любую ветку: тесты движка, архив Release (как для TestFlight),
+# проверка на симуляторах iPhone SE, большого iPhone и iPad со скриншотами.
+# Правки только документации CI не запускают (кроме RULES.md — его сверяют тесты).
+# Отдельного запуска на pull request нет: ветки PR этого репозитория и так проверяются
+# при push, а второй такой же прогон только занимал бы раннеры macOS.
+
 on:
   push:
-  pull_request:
+    branches: ["**"]
+    paths:
+      - "**"
+      - "!**/*.md"
+      - "!docs/**"
+      - "RULES.md"
   workflow_dispatch:
+    inputs:
+      xcode:
+        description: "Мажорная версия Xcode (27 — проверить на будущей iOS, если такой Xcode есть на раннере)"
+        type: string
+        default: "26"
+      old_ios:
+        description: "Ещё проверить на старой iOS, например 16.4 или 17.5 (рантайм скачается, это долго). Пусто — не надо"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
+env:
+  XCODE_MAJOR: ${{ inputs.xcode || '26' }}
+
 jobs:
+  scripts:
+    name: Скрипты (shellcheck, тесты Python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: shellcheck
+        run: shellcheck scripts/*.sh
+
+      - name: Тесты scripts/
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet -r scripts/requirements.txt
+          "$RUNNER_TEMP/venv/bin/python" -m unittest discover -s scripts/tests -v
+
   engine:
     name: Движок и ИИ (swift test)
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - name: Версии
-        run: |
-          xcodebuild -version
-          swift --version
+      - uses: actions/checkout@v7
+
+      - name: Xcode
+        run: bash scripts/select-xcode.sh "$XCODE_MAJOR"
+
+      # Предупреждения компилятора — ошибки. Пакет собирается под macOS 13.3 (ровесник iOS 16.4),
+      # поэтому API новее минимальной iOS здесь тоже не пройдёт.
       - name: Тесты
         working-directory: DebercKit
-        run: swift test
+        run: swift test -Xswiftc -warnings-as-errors
 
-  app:
-    name: Приложение iOS
+  archive:
+    name: Архив Release для устройства
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - name: Версия Xcode
-        run: xcodebuild -version
+      - name: Xcode
+        run: bash scripts/select-xcode.sh "$XCODE_MAJOR"
 
       # То же, что делает workflow TestFlight, только без подписи и загрузки.
-      - name: Архив для устройства (Release, без подписи)
+      - name: Архив (Release, без подписи)
         run: |
-          set -o pipefail
           mkdir -p build
+          set +e
           xcodebuild -project Deberc.xcodeproj -scheme Deberc -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath build/Deberc.xcarchive \
             -derivedDataPath build/DerivedData-device \
             CODE_SIGNING_ALLOWED=NO \
-            archive 2>&1 | tee build/device.log | grep -E "error:|warning:|ARCHIVE (SUCCEEDED|FAILED)" || true
-          grep -q "ARCHIVE SUCCEEDED" build/device.log
+            archive > build/archive.log 2>&1
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ] || ! grep -q "ARCHIVE SUCCEEDED" build/archive.log; then
+            grep -E -B2 -A8 "error:" build/archive.log | head -120 || tail -60 build/archive.log
+            echo "::error::Архив Release не собрался — подробности выше и в артефакте archive-log"
+            exit 1
+          fi
+          # Предупреждения не валят сборку, но видны в сводке запуска.
+          warnings=$(grep -E "^/.*: warning: " build/archive.log | sort -u || true)
+          if [ -n "$warnings" ]; then
+            count=$(printf '%s\n' "$warnings" | wc -l | tr -d ' ')
+            printf '%s\n' "$warnings" | head -30 | while IFS= read -r line; do
+              file=${line%%:*}; file=${file#"$GITHUB_WORKSPACE/"}
+              echo "::warning file=$file::${line#*warning: }"
+            done
+            echo "Предупреждений компилятора: $count" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Проверка содержимого сборки
+        run: |
           APP=build/Deberc.xcarchive/Products/Applications/Deberc.app
-          echo "Info.plist сборки:"
-          plutil -p "$APP/Info.plist" | grep -E "CFBundle(DisplayName|Identifier|ShortVersionString|Version)|ITSAppUses|UISupported|MinimumOS" || true
-          test -f "$APP/PrivacyInfo.xcprivacy" && echo "PrivacyInfo.xcprivacy: есть"
-          test -f "$APP/Assets.car" && echo "Assets.car: есть"
+          python3 - "$APP/Info.plist" <<'PY'
+          import os, plistlib, sys
+          info = plistlib.load(open(sys.argv[1], "rb"))
+          checks = [
+              ("MinimumOSVersion", info.get("MinimumOSVersion"), "16.4"),
+              ("UILaunchScreen.UIColorName", info.get("UILaunchScreen", {}).get("UIColorName"), "LaunchBackground"),
+              ("ITSAppUsesNonExemptEncryption", info.get("ITSAppUsesNonExemptEncryption"), False),
+              ("UIUserInterfaceStyle", info.get("UIUserInterfaceStyle"), "Dark"),
+              ("CFBundleDisplayName", info.get("CFBundleDisplayName"), "Деберц"),
+          ]
+          failed = False
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as s:
+              s.write("### Info.plist сборки\n\n| Ключ | Значение | Ожидается |\n|---|---|---|\n")
+              for key, value, want in checks:
+                  ok = value == want
+                  failed |= not ok
+                  s.write("| %s | %s | %s |\n" % (key, value, "" if ok else "**%s**" % (want,)))
+                  if not ok:
+                      print("::error::Info.plist: %s = %r, ожидается %r" % (key, value, want))
+              s.write("\nВерсия %s, сборка %s\n" % (info.get("CFBundleShortVersionString"), info.get("CFBundleVersion")))
+          sys.exit(1 if failed else 0)
+          PY
+          test -f "$APP/PrivacyInfo.xcprivacy" || { echo "::error::В сборке нет PrivacyInfo.xcprivacy"; exit 1; }
+          test -f "$APP/Assets.car" || { echo "::error::В сборке нет Assets.car"; exit 1; }
+          xcrun --sdk iphoneos assetutil --info "$APP/Assets.car" > build/assets.json
+          for name in LaunchBackground AccentColor AppIcon; do
+            grep -q "\"$name\"" build/assets.json || echo "::warning::В Assets.car не нашёл $name (assetutil --info)"
+          done
+          echo "Ассеты: $(grep -c '"Name"' build/assets.json || true) записей"
 
-      - name: Сборка для симулятора
+      - name: Лог архива
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: archive-log
+          path: build/archive.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+  smoke:
+    name: Симулятор · ${{ matrix.title }}
+    runs-on: macos-26
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: iphone-small
+            title: iPhone SE, крупный текст
+            kind: iphone-small
+            configuration: Debug
+            text_size: extra-extra-extra-large
+            extra_text_size: ""
+            scenarios: screens autoplay2 autoplay3 summary relaunch
+            level_2p: master
+            level_3p: novice
+          - id: iphone-big
+            title: iPhone 6,9″, конец партии
+            kind: iphone-big
+            configuration: Debug
+            text_size: ""
+            extra_text_size: accessibility-large
+            scenarios: screens autoplay2 autoplay3 summary gameover relaunch
+            level_2p: master
+            level_3p: amateur
+          - id: ipad
+            title: iPad, Release
+            kind: ipad
+            configuration: Release
+            text_size: ""
+            extra_text_size: ""
+            scenarios: screens autoplay2 autoplay3 summary relaunch
+            level_2p: expert
+            level_3p: novice
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Xcode
+        run: bash scripts/select-xcode.sh "$XCODE_MAJOR"
+
+      # Симулятор грузится в фоне, пока собирается приложение.
+      - name: Симулятор
+        run: bash scripts/simulator-smoke-test.sh select "${{ matrix.kind }}" latest
+
+      - name: Сборка для симулятора (${{ matrix.configuration }})
         run: |
-          set -o pipefail
-          xcodebuild -project Deberc.xcodeproj -scheme Deberc -configuration Debug \
-            -destination 'generic/platform=iOS Simulator' \
+          mkdir -p build
+          set +e
+          xcodebuild -project Deberc.xcodeproj -scheme Deberc -configuration "${{ matrix.configuration }}" \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
             -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            build 2>&1 | tee build/simulator.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
-          grep -q "BUILD SUCCEEDED" build/simulator.log
+            CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES \
+            build > build/simulator.log 2>&1
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ] || ! grep -q "BUILD SUCCEEDED" build/simulator.log; then
+            grep -E -B2 -A8 "error:" build/simulator.log | head -120 || tail -60 build/simulator.log
+            echo "::error::Сборка для симулятора не удалась"
+            exit 1
+          fi
 
-      - name: Проверка на симуляторе iPhone
+      - name: Проверка на симуляторе
+        env:
+          TEXT_SIZE: ${{ matrix.text_size }}
+          EXTRA_TEXT_SIZE: ${{ matrix.extra_text_size }}
+          SCENARIOS: ${{ matrix.scenarios }}
+          LEVEL_2P: ${{ matrix.level_2p }}
+          LEVEL_3P: ${{ matrix.level_3p }}
         run: |
-          chmod +x scripts/simulator-smoke-test.sh
-          scripts/simulator-smoke-test.sh build/DerivedData/Build/Products/Debug-iphonesimulator/Deberc.app iphone build/screenshots
-
-      - name: Проверка на симуляторе iPad
-        run: |
-          scripts/simulator-smoke-test.sh build/DerivedData/Build/Products/Debug-iphonesimulator/Deberc.app ipad build/screenshots
+          bash scripts/simulator-smoke-test.sh run \
+            "build/DerivedData/Build/Products/${{ matrix.configuration }}-iphonesimulator/Deberc.app" \
+            "${{ matrix.kind }}" build/smoke
 
       - name: Скриншоты и логи
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: screenshots-and-logs
+          name: smoke-${{ matrix.id }}
           path: |
-            build/screenshots
-            build/*.log
+            build/smoke
+            build/simulator.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # Запускается вручную: Actions → CI → Run workflow → «old_ios».
+  # Рантайм старой iOS не стоит на раннере и скачивается (несколько ГБ), поэтому не в каждом прогоне.
+  smoke-old-ios:
+    name: Симулятор · iPhone SE, iOS ${{ inputs.old_ios }}
+    if: github.event_name == 'workflow_dispatch' && inputs.old_ios != ''
+    runs-on: macos-26
+    timeout-minutes: 75
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Xcode
+        run: bash scripts/select-xcode.sh "$XCODE_MAJOR"
+
+      - name: Симулятор со старой iOS
+        env:
+          DOWNLOAD_RUNTIME: "1"
+        run: bash scripts/simulator-smoke-test.sh select iphone-small "${{ inputs.old_ios }}"
+
+      - name: Сборка для симулятора
+        run: |
+          mkdir -p build
+          xcodebuild -project Deberc.xcodeproj -scheme Deberc -configuration Debug \
+            -destination "platform=iOS Simulator,id=$SIM_UDID" \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=YES \
+            build > build/simulator.log 2>&1 || { grep -E -B2 -A8 "error:" build/simulator.log | head -120; exit 1; }
+
+      - name: Проверка на симуляторе
+        env:
+          SCENARIOS: screens autoplay2 summary relaunch
+        run: |
+          bash scripts/simulator-smoke-test.sh run \
+            build/DerivedData/Build/Products/Debug-iphonesimulator/Deberc.app iphone-small build/smoke
+
+      - name: Скриншоты и логи
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke-old-ios
+          path: |
+            build/smoke
+            build/simulator.log
+          retention-days: 14
           if-no-files-found: ignore

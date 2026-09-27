@@ -1,6 +1,9 @@
 import Foundation
 
 /// Итог сдачи — строка в «записи».
+///
+/// Хранится в истории партии. Новые поля — только Optional или с чтением через
+/// `decodeIfPresent` в `init(from:)` ниже, иначе старые сохранения перестанут читаться.
 public struct DealScore: Codable, Equatable, Sendable {
     public enum Outcome: String, Codable, Sendable {
         /// Играющий набрал больше соперников.
@@ -46,6 +49,86 @@ public struct DealScore: Codable, Equatable, Sendable {
     /// Итоговое изменение счёта.
     public var change: [Int]
     public var totalsAfter: [Int]
+
+    // Поля формата 2 (в старых сохранениях их нет — nil).
+
+    /// Объявленные перед розыгрышем комбинации: чьи терцы/полтинники старше, у кого бэла.
+    public var declarations: Declarations? = nil
+    /// Сколько байтов у каждого за партию после этой сдачи.
+    public var baitCountsAfter: [Int]? = nil
+    /// Сколько раз каждый был «голым» за партию после этой сдачи.
+    public var nakedCountsAfter: [Int]? = nil
+}
+
+public extension DealScore {
+    /// Сдача была сыграна (не пересдача): есть взятки, записаны очки.
+    var wasPlayed: Bool { [.made, .bait, .hanging, .tie].contains(outcome) }
+
+    /// Игрок со старшей комбинацией, чьи терцы/полтинники сгорели: ни одной взятки.
+    /// (nil для старых сохранений без `declarations`.)
+    var burnedMeldSeat: Int? {
+        guard wasPlayed, let decl = declarations, let w = decl.meldWinner,
+              meldPoints.indices.contains(w), meldPoints[w] == 0, tricksTaken[w] == 0,
+              !decl.winnerMelds.isEmpty else { return nil }
+        return w
+    }
+
+    /// Игрок, чья бэла сгорела: ни одной взятки.
+    var burnedBellaSeat: Int? {
+        guard wasPlayed, let b = declarations?.bellaSeat,
+              bellaPoints.indices.contains(b), bellaPoints[b] == 0, tricksTaken[b] == 0 else { return nil }
+        return b
+    }
+}
+
+extension DealScore {
+    /// Терпимое чтение: обязательны номер, исход, изменение счёта и итог после сдачи;
+    /// остальные массивы при отсутствии — нули нужной длины.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        number = try c.decode(Int.self, forKey: .number)
+        outcome = try c.decode(Outcome.self, forKey: .outcome)
+        change = try c.decode([Int].self, forKey: .change)
+        totalsAfter = try c.decode([Int].self, forKey: .totalsAfter)
+        let n = change.count
+        guard totalsAfter.count == n else {
+            throw DecodingError.dataCorruptedError(forKey: .totalsAfter, in: c, debugDescription: "Разная длина счёта")
+        }
+        func ints(_ key: CodingKeys) throws -> [Int] {
+            guard let v = try c.decodeIfPresent([Int].self, forKey: key), v.count == n else {
+                return [Int](repeating: 0, count: n)
+            }
+            return v
+        }
+        func flags(_ key: CodingKeys) throws -> [Bool] {
+            guard let v = try c.decodeIfPresent([Bool].self, forKey: key), v.count == n else {
+                return [Bool](repeating: false, count: n)
+            }
+            return v
+        }
+        dealer = try c.decodeIfPresent(Int.self, forKey: .dealer) ?? 0
+        bidder = try c.decodeIfPresent(Int.self, forKey: .bidder)
+        trump = try c.decodeIfPresent(Suit.self, forKey: .trump)
+        forced = try c.decodeIfPresent(Bool.self, forKey: .forced) ?? false
+        cardPoints = try ints(.cardPoints)
+        tricksTaken = try ints(.tricksTaken)
+        meldPoints = try ints(.meldPoints)
+        bellaPoints = try ints(.bellaPoints)
+        raw = try ints(.raw)
+        written = try ints(.written)
+        potAwarded = try ints(.potAwarded)
+        potAdded = try c.decodeIfPresent(Int.self, forKey: .potAdded) ?? 0
+        potAfter = try c.decodeIfPresent(Int.self, forKey: .potAfter) ?? 0
+        penalties = try ints(.penalties)
+        baitPenalty = try flags(.baitPenalty)
+        nakedPenalty = try flags(.nakedPenalty)
+        naked = try flags(.naked)
+        bonus = try ints(.bonus)
+        fourSevensSeat = try c.decodeIfPresent(Int.self, forKey: .fourSevensSeat)
+        declarations = try? c.decodeIfPresent(Declarations.self, forKey: .declarations)
+        baitCountsAfter = (try? c.decodeIfPresent([Int].self, forKey: .baitCountsAfter)).flatMap { $0?.count == n ? $0 : nil }
+        nakedCountsAfter = (try? c.decodeIfPresent([Int].self, forKey: .nakedCountsAfter)).flatMap { $0?.count == n ? $0 : nil }
+    }
 }
 
 /// Итог розыгрыша сдачи, посчитанный по правилам (без номера и итогов партии).
@@ -78,7 +161,8 @@ public enum Scoring {
     ///   - tricksTaken: число взятых взяток.
     ///   - declarations: объявленные комбинации.
     ///   - bidder: играющий (назначивший козырь).
-    ///   - priority: порядок игроков начиная со следующего после сдающего.
+    ///   - priority: все игроки в порядке хода, начиная с первого ходящего (`Deal.leadOrder`).
+    ///     Порядок важен только при дележе очков пополам: нечётное очко — тому, кто раньше ходит.
     ///   - pot: висячие очки из прошлых сдач.
     public static func settle(
         cardPoints: [Int],

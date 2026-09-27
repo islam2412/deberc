@@ -9,8 +9,10 @@ DEVELOPMENT_TEAM =
 PRODUCT_BUNDLE_IDENTIFIER = com.islam2412.deberc
 
 // Версия для пользователей: 1.0, 1.1, …
+// При выпуске тегом (git tag -a v1.1 …) workflow TestFlight берёт версию из тега.
 MARKETING_VERSION = 1.0
 
 // Номер сборки. Для каждой загрузки в TestFlight он должен быть больше предыдущего.
-// В GitHub Actions подставляется автоматически.
+// GitHub Actions подставляет дату и время сборки по UTC: ГГММДД.ЧЧММ, например 260927.1805.
+// Загружаете вручную из Xcode — ставьте номер в том же формате.
 CURRENT_PROJECT_VERSION = 1

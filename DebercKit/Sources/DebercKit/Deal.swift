@@ -61,6 +61,17 @@ public struct Trick: Codable, Equatable, Sendable {
     public var leader: Int? { plays.first?.seat }
     public var cards: [Card] { plays.map(\.card) }
     public var ledSuit: Suit? { plays.first?.card.suit }
+
+    /// Карта, которую положил игрок `seat` (nil — ещё не ходил в эту взятку).
+    public func card(of seat: Int) -> Card? { plays.first { $0.seat == seat }?.card }
+}
+
+extension Trick {
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        plays = try c.decodeIfPresent([PlayedCard].self, forKey: .plays) ?? []
+        winner = try c.decodeIfPresent(Int.self, forKey: .winner)
+    }
 }
 
 public struct SevenExchangeRecord: Codable, Equatable, Sendable {
@@ -95,6 +106,11 @@ public enum DealEvent: Equatable, Sendable {
 }
 
 /// Одна сдача: раздача, торговля, обмен семёрки, розыгрыш.
+///
+/// Сохраняется в партии (JSON). Правило для новых хранимых полей: делать их Optional
+/// или читать в `init(from:)` ниже через `decodeIfPresent(...) ?? значение_по_умолчанию` —
+/// синтезированный Decodable значения по умолчанию у `var` не использует, и старое сохранение
+/// перестанет читаться. Совместимость проверяет SaveCompatibilityTests.
 public struct Deal: Codable, Equatable, Sendable {
     public let rules: RuleSet
     public let playerCount: Int
@@ -184,6 +200,39 @@ public struct Deal: Codable, Equatable, Sendable {
 
     /// Игроки по порядку, начиная со следующего после сдающего (сдающий — последний).
     public var seatsFromDealer: [Int] { (1...playerCount).map { (dealer + $0) % playerCount } }
+
+    /// Порядок хода в розыгрыше, начиная с того, кто ходит первым. Нужен для старшинства
+    /// равных комбинаций и дележа нечётного очка («кто раньше ходит»).
+    public static func leadOrder(dealer: Int, bidder: Int, playerCount n: Int, rules: RuleSet) -> [Int] {
+        let first = rules.firstLead == .afterDealer ? (dealer + 1) % n : bidder
+        return (0..<n).map { (first + $0) % n }
+    }
+
+    /// Кто ходит первым в розыгрыше (nil — козырь ещё не назначен).
+    public var firstLeader: Int? { leadOrder.first }
+
+    /// Порядок хода в розыгрыше начиная с первого ходящего. Пока играющего нет —
+    /// то же, что `seatsFromDealer`.
+    public var leadOrder: [Int] {
+        guard let bidder else { return seatsFromDealer }
+        return Deal.leadOrder(dealer: dealer, bidder: bidder, playerCount: playerCount, rules: rules)
+    }
+
+    /// Последняя собранная взятка.
+    public var lastTrick: Trick? { tricks.last }
+
+    /// Руки каждого на начало розыгрыша (после прикупа и обмена семёрки): оставшиеся карты
+    /// плюс сыгранные этим игроком. До начала розыгрыша — текущие руки.
+    /// Для показа «карт всех» после сдачи; порядок карт — для `sortedForDisplay`.
+    public var initialHands: [[Card]] {
+        var result = hands
+        for trick in tricks + [currentTrick] {
+            for play in trick.plays where result.indices.contains(play.seat) {
+                result[play.seat].append(play.card)
+            }
+        }
+        return result
+    }
 
     public var bottomCard: Card? { stock.last }
 
@@ -346,10 +395,12 @@ public struct Deal: Codable, Equatable, Sendable {
 
     private mutating func startPlay(events: inout [DealEvent]) {
         guard let trump, let bidder else { return }
-        let decl = Combinations.declarations(hands: hands, trump: trump, rules: rules, priority: seatsFromDealer)
+        // Старшинство равных комбинаций — по порядку хода, начиная с первого ходящего.
+        let order = Deal.leadOrder(dealer: dealer, bidder: bidder, playerCount: playerCount, rules: rules)
+        let decl = Combinations.declarations(hands: hands, trump: trump, rules: rules, priority: order)
         declarations = decl
         phase = .playing
-        turn = rules.firstLead == .afterDealer ? next(dealer) : bidder
+        turn = order[0]
         currentTrick = Trick()
         events.append(.playStarted(decl))
     }
@@ -382,5 +433,72 @@ public struct Deal: Codable, Equatable, Sendable {
         } else {
             turn = next(turn)
         }
+    }
+}
+
+// MARK: - Чтение сохранений
+
+extension Deal {
+    /// Терпимое чтение: обязательны только поля, без которых сдачу не восстановить
+    /// (правила, игроки, карты, фаза, чей ход). Остальные берутся из сохранения, а если
+    /// их нет — восстанавливаются по состоянию сдачи. Несогласованная сдача (карты не
+    /// складываются в колоду из 32) не читается — тогда партия пересдаст её заново.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        rules = try c.decodeIfPresent(RuleSet.self, forKey: .rules) ?? .house
+        playerCount = try c.decode(Int.self, forKey: .playerCount)
+        dealer = try c.decode(Int.self, forKey: .dealer)
+        forced = try c.decodeIfPresent(Bool.self, forKey: .forced) ?? false
+        hands = try c.decode([[Card]].self, forKey: .hands)
+        pendingPrikup = try c.decodeIfPresent([[Card]].self, forKey: .pendingPrikup)
+            ?? [[Card]](repeating: [], count: playerCount)
+        stock = try c.decode([Card].self, forKey: .stock)
+        openCard = try c.decode(Card.self, forKey: .openCard)
+        phase = try c.decode(DealPhase.self, forKey: .phase)
+        turn = try c.decode(Int.self, forKey: .turn)
+        trump = try c.decodeIfPresent(Suit.self, forKey: .trump)
+        bidder = try c.decodeIfPresent(Int.self, forKey: .bidder)
+        bids = try c.decodeIfPresent([Bid].self, forKey: .bids) ?? []
+        sevenExchange = try c.decodeIfPresent(SevenExchangeRecord.self, forKey: .sevenExchange)
+        declarations = try c.decodeIfPresent(Declarations.self, forKey: .declarations)
+        tricks = try c.decodeIfPresent([Trick].self, forKey: .tricks) ?? []
+        currentTrick = try c.decodeIfPresent(Trick.self, forKey: .currentTrick) ?? Trick()
+        fourSevensSeat = try c.decodeIfPresent(Int.self, forKey: .fourSevensSeat)
+
+        let n = playerCount
+        let seats = 0..<n
+        func corrupted(_ what: String) -> DecodingError {
+            DecodingError.dataCorrupted(.init(codingPath: c.codingPath, debugDescription: "Несогласованная сдача: \(what)"))
+        }
+        guard (2...3).contains(n), seats.contains(dealer), seats.contains(turn),
+              hands.count == n, pendingPrikup.count == n else { throw corrupted("игроки") }
+        if let bidder, !seats.contains(bidder) { throw corrupted("играющий") }
+        let played = tricks.flatMap(\.cards) + currentTrick.cards
+        let all = hands.flatMap { $0 } + pendingPrikup.flatMap { $0 } + stock + [openCard] + played
+        guard all.count == 32, Set(all).count == 32 else { throw corrupted("карты") }
+        if phase == .playing || phase == .exchange {
+            guard trump != nil, bidder != nil else { throw corrupted("козырь") }
+        }
+        if phase == .playing, declarations == nil { throw corrupted("объявления") }
+
+        let prikupEmpty = pendingPrikup.allSatisfy(\.isEmpty)
+        prikupDealt = try c.decodeIfPresent(Bool.self, forKey: .prikupDealt) ?? prikupEmpty
+        let defaultBottom: Bool
+        switch rules.bottomCard {
+        case .afterDeal: defaultBottom = true
+        case .afterPrikup: defaultBottom = prikupDealt
+        case .hidden: defaultBottom = false
+        }
+        bottomCardVisible = try c.decodeIfPresent(Bool.self, forKey: .bottomCardVisible) ?? defaultBottom
+        allPassed = try c.decodeIfPresent(Bool.self, forKey: .allPassed)
+            ?? (phase == .finished && bidder == nil && fourSevensSeat == nil)
+        // Бэла объявляется, когда её хозяин кладёт короля или даму козырей.
+        var bellaSeen = false
+        if let trump, let b = declarations?.bellaSeat {
+            bellaSeen = (tricks + [currentTrick]).contains { trick in
+                trick.plays.contains { $0.seat == b && $0.card.suit == trump && ($0.card.rank == .king || $0.card.rank == .queen) }
+            }
+        }
+        bellaAnnounced = try c.decodeIfPresent(Bool.self, forKey: .bellaAnnounced) ?? bellaSeen
     }
 }

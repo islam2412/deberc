@@ -4,8 +4,10 @@ import PackageDescription
 let package = Package(
     name: "DebercKit",
     platforms: [
-        .iOS(.v17),
-        .macOS(.v14),
+        // Совпадает с IPHONEOS_DEPLOYMENT_TARGET приложения: iPhone 8/X и новее.
+        .iOS("16.4"),
+        // macOS 13.3 — ровесник iOS 16.4: `swift test` на Mac ловит API новее минимальной iOS.
+        .macOS("13.3"),
     ],
     products: [
         .library(name: "DebercKit", targets: ["DebercKit"]),

@@ -51,8 +51,14 @@ public struct Declarations: Codable, Equatable, Sendable {
 
     /// Очки за последовательности победителя (без учёта взяток).
     public func meldPoints(for seat: Int, rules: RuleSet) -> Int {
-        guard seat == meldWinner else { return 0 }
+        guard seat == meldWinner, melds.indices.contains(seat) else { return 0 }
         return melds[seat].reduce(0) { $0 + $1.points(rules) }
+    }
+
+    /// Последовательности, которые записывает победитель объявлений (пусто, если победителя нет).
+    public var winnerMelds: [Meld] {
+        guard let w = meldWinner, melds.indices.contains(w) else { return [] }
+        return melds[w]
     }
 }
 
@@ -80,6 +86,14 @@ public enum Combinations {
             }
         }
         return result
+    }
+
+    /// Последовательности с учётом правил: если `bellaInMelds` выключено,
+    /// король и дама бэлы (у кого она есть) в последовательностях не участвуют.
+    public static func melds(in hand: [Card], trump: Suit, rules: RuleSet) -> [Meld] {
+        guard !rules.bellaInMelds, hasBella(hand, trump: trump) else { return melds(in: hand) }
+        let bella: Set<Card> = [Card(.king, trump), Card(.queen, trump)]
+        return melds(in: hand.filter { !bella.contains($0) })
     }
 
     public static func hasBella(_ hand: [Card], trump: Suit) -> Bool {
@@ -133,9 +147,11 @@ public enum Combinations {
         return winner
     }
 
-    /// Объявления для рук на начало розыгрыша.
+    /// Объявления для рук на начало розыгрыша. `priority` — порядок хода в розыгрыше,
+    /// начиная с того, кто ходит первым (см. `Deal.leadOrder`): при полном равенстве
+    /// комбинаций записывает тот, кто раньше ходит.
     public static func declarations(hands: [[Card]], trump: Suit, rules: RuleSet, priority: [Int]) -> Declarations {
-        let melds = hands.map { Combinations.melds(in: $0) }
+        let melds = hands.map { Combinations.melds(in: $0, trump: trump, rules: rules) }
         let winner = winningSeat(meldsBySeat: melds, trump: trump, rules: rules, priority: priority)
         let bella = hands.firstIndex { hasBella($0, trump: trump) }
         return Declarations(melds: melds, meldWinner: winner, bellaSeat: bella)

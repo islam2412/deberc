@@ -1,93 +1,216 @@
 name: TestFlight
 
-# Сборка и загрузка в App Store Connect → TestFlight.
-# Запуск вручную: Actions → TestFlight → Run workflow. Или пушем тега вида v1.0.
-# Что нужно заранее — см. docs/TESTFLIGHT.md.
+# Сборка, загрузка в App Store Connect и раздача в TestFlight.
+# Вручную: Actions → TestFlight → Run workflow (там же — пробный прогон без загрузки).
+# Тегом: git tag -a v1.1 -m "Что тестировать…" && git push origin v1.1
+#   (версия берётся из тега, текст сообщения тега — «Что тестировать»).
+# Что нужно заранее — docs/TESTFLIGHT.md.
 
 on:
   workflow_dispatch:
+    inputs:
+      signing:
+        description: "Подпись. unsigned — архив без подписи, подпись Apple Distribution при экспорте (рекомендуется). auto — сначала архив с подписью разработчика, при ошибке подписи — как unsigned"
+        type: choice
+        options: [unsigned, auto]
+        default: unsigned
+      dry_run:
+        description: "Пробный прогон: собрать и подписать .ipa, но не загружать (файл — в артефактах)"
+        type: boolean
+        default: false
+      whats_new:
+        description: "«Что тестировать» для этой сборки (пусто — текст из docs/WHATS_NEW.txt)"
+        type: string
+        default: ""
+      group:
+        description: "Внешняя группа TestFlight (пусто — переменная TESTFLIGHT_GROUP; если нет и её, сборка никуда не добавляется)"
+        type: string
+        default: ""
+      submit_review:
+        description: "Отправить на проверку Beta App Review (нужно, чтобы сборку увидели по публичной ссылке)"
+        type: boolean
+        default: true
   push:
     tags:
       - "v*"
+
+permissions:
+  contents: read
 
 concurrency:
   group: testflight
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
+env:
+  SIGNING: ${{ inputs.signing || 'unsigned' }}
+  DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
+
 jobs:
   upload:
-    name: Сборка и загрузка в TestFlight
+    name: Сборка и загрузка
     runs-on: macos-26
     timeout-minutes: 60
-    env:
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-      # Необязательно: свой Bundle ID (Settings → Secrets and variables → Actions → Variables).
-      BUNDLE_ID: ${{ vars.BUNDLE_ID }}
-      # Номер сборки растёт с каждым запуском. Смещение +100 — чтобы не пересечься
-      # с номерами, загруженными вручную из Xcode.
-      BUILD_NUMBER: ${{ github.run_number }}
+    permissions:
+      contents: read
+      actions: read # для проверки CI коммита при запуске тегом
+    outputs:
+      version: ${{ steps.params.outputs.version }}
+      build: ${{ steps.params.outputs.build }}
+      bundle_id: ${{ steps.params.outputs.bundle_id }}
+      uploaded: ${{ steps.export.outputs.uploaded }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+
+      - name: Xcode
+        run: bash scripts/select-xcode.sh 26
 
       - name: Проверка секретов
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
-          missing=0
+          bad=0
           for name in APPLE_TEAM_ID ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
             if [ -z "${!name}" ]; then
-              echo "::error::Не задан секрет $name — см. docs/TESTFLIGHT.md, шаг «Секреты GitHub»"
-              missing=1
+              echo "::error::Не задан секрет $name — docs/TESTFLIGHT.md, шаг 5 «Секреты GitHub»"
+              bad=1
             fi
           done
-          exit $missing
+          [ $bad = 0 ] || exit 1
+          [[ "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || { echo "::error::APPLE_TEAM_ID — 10 заглавных латинских букв и цифр (Team ID из developer.apple.com)"; bad=1; }
+          [[ "$ASC_KEY_ID" =~ ^[A-Z0-9]{10}$ ]] || { echo "::error::ASC_KEY_ID — 10 заглавных латинских букв и цифр (Key ID ключа API)"; bad=1; }
+          [[ "$ASC_ISSUER_ID" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "::error::ASC_ISSUER_ID — это UUID вида 69a6de7e-…, он над таблицей ключей"; bad=1; }
+          exit $bad
 
-      - name: Версия Xcode
-        run: xcodebuild -version
+      - name: Версия и номер сборки
+        id: params
+        env:
+          BUNDLE_ID_OVERRIDE: ${{ vars.BUNDLE_ID }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            VERSION=${GITHUB_REF_NAME#v}
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] ||
+              { echo "::error::Тег $GITHUB_REF_NAME не похож на версию: нужно v1.1 или v1.1.2"; exit 1; }
+          else
+            VERSION=$(sed -n 's/^MARKETING_VERSION *= *//p' Config/Deberc.xcconfig | tr -d ' \r')
+          fi
+          BUNDLE_ID=${BUNDLE_ID_OVERRIDE:-$(sed -n 's/^PRODUCT_BUNDLE_IDENTIFIER *= *//p' Config/Deberc.xcconfig | tr -d ' \r')}
+          # Номер сборки — дата и время UTC: 260927.1805 = 27.09.2026 18:05.
+          # Всегда растёт, не зависит от перезапусков и переименований workflow; видно, когда собрано.
+          BUILD="$(date -u +%y%m%d).$((10#$(date -u +%H%M)))"
+          {
+            echo "VERSION=$VERSION"
+            echo "BUILD=$BUILD"
+            echo "BUNDLE_ID=$BUNDLE_ID"
+          } >> "$GITHUB_ENV"
+          {
+            echo "version=$VERSION"
+            echo "build=$BUILD"
+            echo "bundle_id=$BUNDLE_ID"
+          } >> "$GITHUB_OUTPUT"
+          echo "Версия $VERSION, сборка $BUILD, Bundle ID $BUNDLE_ID, подпись: $SIGNING, пробный прогон: $DRY_RUN"
+
+      - name: CI этого коммита
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&per_page=100" > "$RUNNER_TEMP/runs.json"
+          python3 - "$RUNNER_TEMP/runs.json" <<'PY'
+          import json, sys
+          runs = [r for r in json.load(open(sys.argv[1])).get("workflow_runs", [])
+                  if r.get("path", "").endswith(".github/workflows/ci.yml")]
+          runs.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+          if not runs:
+              print("::warning::Для этого коммита CI не запускался — загружаю без проверки")
+          elif runs[0].get("status") != "completed" or runs[0].get("conclusion") == "cancelled":
+              print("::warning::CI этого коммита не закончен (%s): %s"
+                    % (runs[0].get("conclusion") or runs[0].get("status"), runs[0].get("html_url")))
+          elif runs[0].get("conclusion") != "success":
+              print("::error::CI этого коммита не зелёный (%s): %s. Сначала почините, потом ставьте тег"
+                    % (runs[0].get("conclusion"), runs[0].get("html_url")))
+              sys.exit(1)
+          else:
+              print("CI зелёный: %s" % runs[0].get("html_url"))
+          PY
 
       - name: Тесты движка
         working-directory: DebercKit
         run: swift test
 
       - name: Ключ App Store Connect API
-        run: |
-          mkdir -p "$RUNNER_TEMP/keys"
-          KEY_PATH="$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8"
-          printf '%s\n' "$ASC_KEY_P8" > "$KEY_PATH"
-          echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
-          echo "BUILD=$((BUILD_NUMBER + 100))" >> "$GITHUB_ENV"
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: python3 scripts/asc.py write-key --dir "$RUNNER_TEMP/asc"
 
-      # Сначала — обычный архив с автоматической подписью (стандартный путь Apple;
-      # нужен хотя бы один зарегистрированный iPhone/iPad в команде).
-      # Если не вышло — архив без подписи, а подпись для App Store ставится при экспорте.
-      - name: Архив (Release)
+      - name: Предпроверка App Store Connect
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
-          EXTRA=()
-          if [ -n "$BUNDLE_ID" ]; then EXTRA+=("PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE_ID"); fi
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet -r scripts/requirements.txt
+          "$RUNNER_TEMP/venv/bin/python" scripts/asc.py check --bundle-id "$BUNDLE_ID" --version "$VERSION" --build "$BUILD"
+
+      - name: Архив (Release)
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          mkdir -p build
           COMMON=(-project Deberc.xcodeproj -scheme Deberc -configuration Release
                   -destination 'generic/platform=iOS' -archivePath build/Deberc.xcarchive
-                  DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CURRENT_PROJECT_VERSION="$BUILD" "${EXTRA[@]}")
-          AUTH=(-allowProvisioningUpdates -authenticationKeyPath "$ASC_KEY_PATH"
-                -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID")
+                  -derivedDataPath build/DerivedData
+                  DEVELOPMENT_TEAM="$APPLE_TEAM_ID" PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"
+                  MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD")
+          show_errors() { grep -E -B2 -A8 "error:" "$1" | head -150 || tail -80 "$1"; }
+          archive_unsigned() {
+            xcodebuild "${COMMON[@]}" CODE_SIGNING_ALLOWED=NO archive > build/archive-unsigned.log 2>&1 &&
+              grep -q "ARCHIVE SUCCEEDED" build/archive-unsigned.log
+          }
 
-          if xcodebuild "${COMMON[@]}" "${AUTH[@]}" CODE_SIGN_STYLE=Automatic archive > build-archive.log 2>&1 \
-             && grep -q "ARCHIVE SUCCEEDED" build-archive.log; then
-            echo "Архив собран и подписан."
+          if [ "$SIGNING" = auto ]; then
+            if xcodebuild "${COMMON[@]}" CODE_SIGN_STYLE=Automatic -allowProvisioningUpdates \
+                 -authenticationKeyPath "$ASC_KEY_PATH" -authenticationKeyID "$ASC_KEY_ID" \
+                 -authenticationKeyIssuerID "$ASC_ISSUER_ID" archive > build/archive-signed.log 2>&1 &&
+               grep -q "ARCHIVE SUCCEEDED" build/archive-signed.log; then
+              MODE="архив с подписью разработчика"
+            elif grep -Eq "No profiles for|has no devices|No signing certificate|requires a provisioning profile|No Accounts|requires a development team|doesn't include signing certificate|Provisioning profile" build/archive-signed.log; then
+              grep -E "error:" build/archive-signed.log | head -5 || true
+              echo "::warning::Подпись разработчика не получилась (обычно — нет зарегистрированных устройств). Собираю без подписи, подпись для App Store будет при экспорте."
+              rm -rf build/Deberc.xcarchive
+              archive_unsigned || { show_errors build/archive-unsigned.log; echo "::error::Архив без подписи не собрался"; exit 1; }
+              MODE="архив без подписи (запасной путь после ошибки подписи)"
+            else
+              show_errors build/archive-signed.log
+              echo "::error::Архив не собрался, и это не ошибка подписи — см. лог выше и артефакт testflight-logs"
+              exit 1
+            fi
           else
-            grep -E "error:" build-archive.log | head -20 || true
-            echo "::warning::Подписанный архив не собрался (частая причина — в команде нет зарегистрированных устройств). Собираю без подписи; подпись для App Store будет при экспорте."
-            rm -rf build/Deberc.xcarchive
-            xcodebuild "${COMMON[@]}" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-              archive > build-archive-unsigned.log 2>&1 || true
-            grep -E "error:" build-archive-unsigned.log | head -20 || true
-            grep -q "ARCHIVE SUCCEEDED" build-archive-unsigned.log
+            archive_unsigned || { show_errors build/archive-unsigned.log; echo "::error::Архив не собрался — см. лог выше и артефакт testflight-logs"; exit 1; }
+            MODE="архив без подписи, подпись Apple Distribution при экспорте"
           fi
+          echo "ARCHIVE_MODE=$MODE" >> "$GITHUB_ENV"
+          echo "$MODE"
 
-      - name: Загрузка в App Store Connect
+      - name: ${{ env.DRY_RUN == 'true' && 'Экспорт .ipa (пробный прогон)' || 'Загрузка в App Store Connect' }}
+        id: export
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
-          set -o pipefail
-          cat > ExportOptions.plist <<EOF
+          DESTINATION=upload
+          [ "$DRY_RUN" = true ] && DESTINATION="export"
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
@@ -95,7 +218,7 @@ jobs:
             <key>method</key>
             <string>app-store-connect</string>
             <key>destination</key>
-            <string>upload</string>
+            <string>${DESTINATION}</string>
             <key>teamID</key>
             <string>${APPLE_TEAM_ID}</string>
             <key>signingStyle</key>
@@ -107,29 +230,129 @@ jobs:
           </dict>
           </plist>
           EOF
+          set +e
           xcodebuild -exportArchive \
             -archivePath build/Deberc.xcarchive \
-            -exportOptionsPlist ExportOptions.plist \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
             -exportPath build/export \
             -allowProvisioningUpdates \
             -authenticationKeyPath "$ASC_KEY_PATH" \
             -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            2>&1 | tee build-export.log | grep -E "error|Upload|EXPORT (SUCCEEDED|FAILED)" || true
-          grep -q "EXPORT SUCCEEDED" build-export.log
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" > build/export.log 2>&1
+          rc=$?
+          set -e
+          grep -E "Upload|error|EXPORT (SUCCEEDED|FAILED)" build/export.log | head -60 || true
+          if [ $rc -ne 0 ] || ! grep -q "EXPORT SUCCEEDED" build/export.log; then
+            echo "::error::Экспорт не удался. Частые причины — в docs/TESTFLIGHT.md, «Частые ошибки»; полный лог — в артефакте testflight-logs"
+            exit 1
+          fi
+          if [ "$DRY_RUN" = true ]; then
+            ls -la build/export
+            echo "uploaded=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "uploaded=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Удалить ключ
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc" "$RUNNER_TEMP/ExportOptions.plist"
 
       - name: Итог
+        if: always()
         run: |
-          echo "### Сборка $BUILD загружена в App Store Connect" >> "$GITHUB_STEP_SUMMARY"
-          echo "Через 10–30 минут она появится в TestFlight (App Store Connect → Приложения → Деберц → TestFlight)." >> "$GITHUB_STEP_SUMMARY"
+          {
+            if [ "${{ steps.export.outcome }}" = success ]; then
+              if [ "$DRY_RUN" = true ]; then
+                echo "### Пробный прогон: .ipa собран и подписан, в App Store Connect ничего не загружено"
+                echo "Файл — в артефакте \`Deberc-ipa\`."
+              else
+                echo "### Сборка ${BUILD:-?} (версия ${VERSION:-?}) загружена в App Store Connect"
+                echo "Дальше — задача «Раздача в TestFlight»: ждёт обработки Apple и добавляет сборку в группу."
+              fi
+            else
+              echo "### Сборка не загружена"
+            fi
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Версия | ${VERSION:-?} |"
+            echo "| Сборка | ${BUILD:-?} |"
+            echo "| Bundle ID | ${BUNDLE_ID:-?} |"
+            echo "| Подпись | ${ARCHIVE_MODE:-—} ($SIGNING) |"
+            echo "| Xcode | $(xcodebuild -version | tr '\n' ' ') |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Логи
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: testflight-logs
-          path: |
-            build-archive.log
-            build-archive-unsigned.log
-            build-export.log
+          path: build/*.log
+          retention-days: 30
           if-no-files-found: ignore
+
+      - name: .ipa пробного прогона
+        if: env.DRY_RUN == 'true' && steps.export.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Deberc-ipa
+          path: build/export/*.ipa
+          retention-days: 7
+
+  distribute:
+    name: Раздача в TestFlight
+    needs: upload
+    if: needs.upload.outputs.uploaded == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    env:
+      VERSION: ${{ needs.upload.outputs.version }}
+      BUILD: ${{ needs.upload.outputs.build }}
+      BUNDLE_ID: ${{ needs.upload.outputs.bundle_id }}
+      GROUP: ${{ inputs.group || vars.TESTFLIGHT_GROUP }}
+      SUBMIT: ${{ (github.event_name != 'workflow_dispatch' || inputs.submit_review) && 'true' || 'false' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Текст «Что тестировать»
+        env:
+          WHATS_NEW_INPUT: ${{ inputs.whats_new }}
+        run: |
+          # По порядку: поле при запуске → сообщение аннотированного тега → docs/WHATS_NEW.txt.
+          out="$RUNNER_TEMP/whats_new.txt"
+          if [ -n "$WHATS_NEW_INPUT" ]; then
+            printf '%s\n' "$WHATS_NEW_INPUT" > "$out"
+          elif [ "$GITHUB_REF_TYPE" = tag ] &&
+               git fetch --quiet --depth=1 origin "+refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME" &&
+               [ "$(git cat-file -t "refs/tags/$GITHUB_REF_NAME")" = tag ]; then
+            git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/^-----BEGIN PGP SIGNATURE-----/,$d' > "$out"
+          else
+            cp docs/WHATS_NEW.txt "$out"
+          fi
+          echo "WHATS_NEW_FILE=$out" >> "$GITHUB_ENV"
+          echo "::group::Что тестировать"
+          cat "$out"
+          echo "::endgroup::"
+
+      - name: Ключ App Store Connect API
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: python3 scripts/asc.py write-key --dir "$RUNNER_TEMP/asc"
+
+      - name: Обработка, группа, проверка Beta App Review
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet -r scripts/requirements.txt
+          ARGS=(distribute --bundle-id "$BUNDLE_ID" --version "$VERSION" --build "$BUILD"
+                --whats-new-file "$WHATS_NEW_FILE" --timeout 5400)
+          [ -n "$GROUP" ] && ARGS+=(--group "$GROUP")
+          [ "$SUBMIT" = true ] && ARGS+=(--submit)
+          "$RUNNER_TEMP/venv/bin/python" scripts/asc.py "${ARGS[@]}"
+
+      - name: Удалить ключ
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"

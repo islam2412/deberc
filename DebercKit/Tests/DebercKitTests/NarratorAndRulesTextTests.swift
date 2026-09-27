@@ -76,9 +76,98 @@ final class NarratorAndRulesTextTests: XCTestCase {
         XCTAssertTrue(text.contains("Штрафов нет."))
     }
 
-    /// Генерирует RULES.md: DEBERC_WRITE_RULES=/путь/к/файлу swift test --filter testWriteRulesMarkdown
+    func testRulesTextForcedDealGrammar() {
+        var r = RuleSet.house
+        r.forcedDealAfterRedeals = 1
+        var text = RulesText.markdown(for: r)
+        XCTAssertTrue(text.contains("если все спасовали и была пересдача"))
+        XCTAssertFalse(text.contains("1 раза"))
+        r.forcedDealAfterRedeals = 2
+        text = RulesText.markdown(for: r)
+        XCTAssertTrue(text.contains("пересдача была 2 раза подряд"))
+        r.forcedDealAfterRedeals = 5
+        XCTAssertTrue(RulesText.markdown(for: r).contains("пересдача была 5 раз подряд"))
+        r.forcedDealAfterRedeals = 0
+        text = RulesText.markdown(for: r)
+        XCTAssertFalse(text.contains("Обязы"))
+        XCTAssertFalse(text.contains("до обязов"), "Без обязов про счёт пересдач не пишем")
+    }
+
+    func testRulesTextNewSwitches() {
+        let house = RulesText.markdown(for: .house)
+        XCTAssertTrue(house.contains("Король и дама из бэлы могут входить и в терц."))
+        XCTAssertTrue(house.contains("снова обязы, у нового сдающего"))
+        XCTAssertTrue(house.contains("лишнее очко получает тот, кто раньше ходит"))
+        XCTAssertTrue(house.contains("Висячие очки, не разыгранные до конца партии, сгорают."))
+        XCTAssertTrue(house.contains("по часовой стрелке"))
+        var r = RuleSet.house
+        r.bellaInMelds = false
+        r.fourSevensKeepsForcedStreak = false
+        let text = RulesText.markdown(for: r)
+        XCTAssertTrue(text.contains("Король и дама из бэлы в терц и полтинник не входят."))
+        XCTAssertTrue(text.contains("начинает счёт пересдач до обязов заново"))
+    }
+
+    func testRulesDecodeNewSwitchesTolerantly() throws {
+        let old = try JSONDecoder().decode(RuleSet.self, from: Data(#"{"targetScore": 501}"#.utf8))
+        XCTAssertTrue(old.bellaInMelds)
+        XCTAssertTrue(old.fourSevensKeepsForcedStreak)
+        var r = RuleSet.house
+        r.bellaInMelds = false
+        r.fourSevensKeepsForcedStreak = false
+        XCTAssertEqual(try JSONDecoder().decode(RuleSet.self, from: JSONEncoder().encode(r)), r)
+    }
+
+    // MARK: - RULES.md
+
+    static let generatedStart = "<!-- generated:start -->"
+    static let generatedEnd = "<!-- generated:end -->"
+
+    /// RULES.md в корне репозитория (рядом с папкой DebercKit).
+    static var rulesFileURL: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // DebercKitTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // DebercKit
+            .deletingLastPathComponent()   // корень репозитория
+            .appendingPathComponent("RULES.md")
+    }
+
+    /// Что стоит между маркерами: разделы правил, отбитые пустыми строками.
+    static func generatedBlock() -> String {
+        "\n\n" + RulesText.markdownBody(for: .house) + "\n"
+    }
+
+    /// Разбивает RULES.md на ручное начало, генерируемую часть и ручной хвост.
+    static func splitRules(_ text: String) -> (head: String, body: String, tail: String)? {
+        guard let start = text.range(of: generatedStart), let end = text.range(of: generatedEnd),
+              start.upperBound <= end.lowerBound else { return nil }
+        return (String(text[..<start.upperBound]), String(text[start.upperBound..<end.lowerBound]),
+                String(text[end.lowerBound...]))
+    }
+
+    /// Генерируемая часть RULES.md совпадает с экраном «Правила» (RulesText, домашние правила).
+    /// Если тест упал — перегенерируйте: DEBERC_WRITE_RULES=1 swift test --filter testWriteRulesMarkdown
+    func testRulesMarkdownMatchesRepository() throws {
+        let url = Self.rulesFileURL
+        try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path), "RULES.md не найден рядом с пакетом")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        let parts = try XCTUnwrap(Self.splitRules(text), "В RULES.md нет маркеров генерируемой части")
+        XCTAssertEqual(parts.body, Self.generatedBlock(),
+                       "RULES.md устарел — перегенерируйте его (см. комментарий к тесту)")
+        XCTAssertTrue(parts.head.hasPrefix("# Деберц — наши правила"))
+        XCTAssertTrue(parts.tail.contains("## Что уточнить у папы"), "Ручной раздел не должен пропасть")
+    }
+
+    /// Перегенерирует часть RULES.md между маркерами, ручные разделы не трогает:
+    /// DEBERC_WRITE_RULES=1 swift test --filter testWriteRulesMarkdown
+    /// (или DEBERC_WRITE_RULES=/путь/к/RULES.md).
     func testWriteRulesMarkdown() throws {
-        guard let path = ProcessInfo.processInfo.environment["DEBERC_WRITE_RULES"] else { return }
-        try RulesText.markdown(for: .house).write(toFile: path, atomically: true, encoding: .utf8)
+        guard let value = ProcessInfo.processInfo.environment["DEBERC_WRITE_RULES"] else { return }
+        let url = value.hasSuffix(".md") ? URL(fileURLWithPath: value) : Self.rulesFileURL
+        let text = try String(contentsOf: url, encoding: .utf8)
+        let parts = try XCTUnwrap(Self.splitRules(text), "В RULES.md нет маркеров генерируемой части")
+        let updated = parts.head + Self.generatedBlock() + parts.tail
+        try updated.write(to: url, atomically: true, encoding: .utf8)
     }
 }

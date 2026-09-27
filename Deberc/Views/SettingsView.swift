@@ -1,189 +1,194 @@
 import SwiftUI
 import DebercKit
 
-/// Настройки игры и все правила.
+/// Настройки: «Игра» (темп, касания, вид, звук, имя) и отдельная страница «Правила партии».
+/// Настройки игры действуют сразу — и в идущей партии; правила — с новой партии.
 struct SettingsView: View {
     @EnvironmentObject private var store: GameStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var confirmReset = false
+    /// Имя в поле. «Вы» по умолчанию показывается подсказкой, а не текстом, который надо стирать.
+    @State private var nameDraft = ""
+    @State private var nameLoaded = false
+
+    /// Длина имени: длиннее не помещается на табличках и в столбцах записи.
+    static let nameLimit = 12
 
     var body: some View {
-        NavigationStack {
+        SheetContainer(title: "Настройки") {
             Form {
                 gameSection
-                namesSection
-                partySection
-                biddingSection
-                meldsSection
-                playSection
-                scoringSection
-                penaltiesSection
-                Section {
-                    Button("Вернуть наши правила", role: .destructive) { confirmReset = true }
-                } footer: {
-                    Text("Изменения правил действуют с новой партии.")
-                }
-                Section {
-                    LabeledContent("Версия", value: appVersion)
-                }
+                lookSection
+                soundSection
+                nameSection
+                rulesSection
+                aboutSection
             }
-            .navigationTitle("Настройки")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Готово") { dismiss() }
-                }
-            }
-            .confirmationDialog("Вернуть правила по умолчанию?", isPresented: $confirmReset, titleVisibility: .visible) {
-                Button("Вернуть", role: .destructive) { store.settings.rules = .house }
-                Button("Отмена", role: .cancel) {}
-            }
+            .scrollContentBackground(.hidden)
         }
     }
 
-    private var appVersion: String {
-        let info = Bundle.main.infoDictionary
-        let version = info?["CFBundleShortVersionString"] as? String ?? "?"
-        let build = info?["CFBundleVersion"] as? String ?? "?"
-        return "\(version) (\(build))"
-    }
-
-    // MARK: - Разделы
+    // MARK: - Игра
 
     private var gameSection: some View {
-        Section("Игра") {
-            Picker("Сложность", selection: $store.settings.botLevel) {
-                ForEach(BotLevel.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            Picker("Скорость", selection: $store.settings.speed) {
-                ForEach(GameSpeed.allCases) { Text($0.title).tag($0) }
-            }
-            Toggle("Ходить двойным касанием", isOn: $store.settings.confirmCardTap)
-        }
-    }
-
-    private var namesSection: some View {
         Section {
-            TextField("Ваше имя", text: $store.settings.playerName)
-            TextField("Соперник 1", text: $store.settings.botNames[0])
-            TextField("Соперник 2", text: $store.settings.botNames[1])
+            Picker(selection: $store.settings.speed) {
+                ForEach(GameSpeed.allCases) { speed in
+                    Text(speed.title).tag(speed)
+                }
+            } label: {
+                SettingLabel(title: "Скорость игры", detail: "Как быстро ходят соперники и сколько лежит взятка")
+            }
+            Toggle(isOn: $store.settings.confirmCardTap) {
+                SettingLabel(title: "Ход в два касания", detail: "Первое касание приподнимает карту, второе — ходит")
+            }
+            Toggle(isOn: $store.settings.showLivePoints) {
+                SettingLabel(title: "Мои очки во время сдачи", detail: "Сколько взяток и очков у вас уже есть")
+            }
         } header: {
-            Text("Имена")
+            Text("Игра").formHeaderStyle()
         } footer: {
-            Text("Второй соперник играет, когда вы выбираете игру втроём.")
+            Text("Действует сразу, и в идущей партии.").formHeaderStyle()
         }
+        .screenRow()
     }
 
-    private var partySection: some View {
-        Section("Партия") {
-            Picker("До скольки очков", selection: $store.settings.rules.targetScore) {
-                ForEach([301, 501, 701, 1001], id: \.self) { Text("\($0)").tag($0) }
+    private var lookSection: some View {
+        Section {
+            Toggle(isOn: $store.settings.largeCards) {
+                SettingLabel(title: "Крупный режим", detail: "Крупнее карты, подписи и кнопки")
             }
+            Toggle(isOn: $store.settings.fourColorDeck) {
+                HStack(spacing: 10) {
+                    SettingLabel(title: "Четырёхцветная колода", detail: "У каждой масти свой цвет")
+                    Spacer(minLength: 4)
+                    HStack(spacing: 3) {
+                        ForEach(Suit.allCases, id: \.self) { suit in
+                            SuitBadge(suit: suit, size: 22, fourColor: store.settings.fourColorDeck)
+                        }
+                    }
+                    .accessibilityHidden(true)
+                }
+            }
+        } header: {
+            Text("Вид").formHeaderStyle()
         }
+        .screenRow()
     }
 
-    private var biddingSection: some View {
-        Section("Раздача и козырь") {
-            Picker("Обязы", selection: $store.settings.rules.forcedDealAfterRedeals) {
-                Text("Нет").tag(0)
-                Text("После 1 пересдачи").tag(1)
-                Text("После 2 пересдач").tag(2)
-                Text("После 3 пересдач").tag(3)
+    private var soundSection: some View {
+        Section {
+            Toggle(isOn: $store.settings.soundEnabled) {
+                SettingLabel(title: "Звуки", detail: "Тихо, не перебивает музыку; молчит в беззвучном режиме")
             }
-            Picker("Обмен козырной семёрки", selection: $store.settings.rules.sevenExchange) {
-                Text("Любой игрок").tag(RuleSet.SevenExchange.anyPlayer)
-                Text("Только играющий").tag(RuleSet.SevenExchange.bidderOnly)
-                Text("Нельзя").tag(RuleSet.SevenExchange.off)
+            if !AppInfo.isPad {
+                Toggle(isOn: $store.settings.hapticsEnabled) {
+                    SettingLabel(title: "Вибрация", detail: "Лёгкий отклик на ход, взятку и ошибку")
+                }
             }
-            Picker("Первый ход", selection: $store.settings.rules.firstLead) {
-                Text("Следующий после сдающего").tag(RuleSet.FirstLead.afterDealer)
-                Text("Играющий").tag(RuleSet.FirstLead.bidder)
-            }
-            Picker("Кто сдаёт", selection: $store.settings.rules.dealerRotation) {
-                Text("По кругу").tag(RuleSet.DealerRotation.nextPlayer)
-                Text("Выигравший сдачу").tag(RuleSet.DealerRotation.dealWinner)
-            }
-            Picker("Четыре семёрки", selection: $store.settings.rules.fourSevens) {
-                Text("+\(store.settings.rules.fourSevensBonus) и пересдача").tag(RuleSet.FourSevens.bonusAndRedeal)
-                Text("Пересдача").tag(RuleSet.FourSevens.redeal)
-                Text("Ничего").tag(RuleSet.FourSevens.off)
-            }
-            Toggle("Семёрки считаются и после прикупа", isOn: $store.settings.rules.fourSevensAfterPrikup)
-            Picker("Нижняя карта", selection: $store.settings.rules.bottomCard) {
-                Text("Открыть после прикупа").tag(RuleSet.BottomCard.afterPrikup)
-                Text("Открыть сразу").tag(RuleSet.BottomCard.afterDeal)
-                Text("Не показывать").tag(RuleSet.BottomCard.hidden)
-            }
+        } header: {
+            Text(AppInfo.isPad ? "Звук" : "Звук и вибрация").formHeaderStyle()
         }
+        .screenRow()
     }
 
-    private var meldsSection: some View {
-        Section("Комбинации") {
-            Toggle("5 подряд — сотня (100)", isOn: $store.settings.rules.hundredForFive)
-            Picker("Какая старше", selection: $store.settings.rules.meldOrder) {
-                Text("Длиннее, потом по старшей карте").tag(RuleSet.MeldOrder.longerFirst)
-                Text("По стоимости, потом по старшей карте").tag(RuleSet.MeldOrder.valueThenTopCard)
+    private var nameSection: some View {
+        Section {
+            LabeledContent {
+                TextField("Вы", text: $nameDraft)
+                    .multilineTextAlignment(.trailing)
+                    .textInputAutocapitalization(.words)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .onAppear(perform: loadName)
+                    .onChange(of: nameDraft, perform: saveName)
+            } label: {
+                Text("Ваше имя")
             }
-            Picker("Нужна взятка", selection: $store.settings.rules.combosNeedTrick) {
-                Text("Для всех комбинаций").tag(RuleSet.CombosNeedTrick.all)
-                Text("Только для бэлы").tag(RuleSet.CombosNeedTrick.bellaOnly)
-                Text("Не нужна").tag(RuleSet.CombosNeedTrick.none)
-            }
+        } header: {
+            Text("Вы").formHeaderStyle()
+        } footer: {
+            Text("Так вас подпишут в записи партии и в итогах — с новой партии. До \(SettingsView.nameLimit) букв.")
+                .formHeaderStyle()
         }
+        .screenRow()
     }
 
-    private var playSection: some View {
-        Section("Розыгрыш") {
-            Toggle("Нет масти — обязан козырять", isOn: $store.settings.rules.mustTrump)
-            Picker("Перебивать козырь", selection: $store.settings.rules.overtrump) {
-                Text("Не обязательно").tag(RuleSet.Overtrump.never)
-                Text("Только на ход с козыря").tag(RuleSet.Overtrump.trumpLeadOnly)
-                Text("Всегда").tag(RuleSet.Overtrump.always)
-            }
-        }
+    private func loadName() {
+        guard !nameLoaded else { return }
+        nameLoaded = true
+        let current = store.settings.playerName
+        nameDraft = current == "Вы" ? "" : current
     }
 
-    private var scoringSection: some View {
-        Section("Подсчёт") {
-            Picker("Байт", selection: $store.settings.rules.baitTransfer) {
-                Text("Очки уходят сопернику").tag(RuleSet.BaitTransfer.toOpponent)
-                Text("Очки сгорают").tag(RuleSet.BaitTransfer.burn)
-            }
-            Picker("Байт втроём", selection: $store.settings.rules.baitRecipient) {
-                Text("Тому, у кого больше").tag(RuleSet.BaitRecipient.leadingOpponent)
-                Text("Пополам").tag(RuleSet.BaitRecipient.splitHalf)
-            }
-            Picker("Втроём играющий должен", selection: $store.settings.rules.bidderMustBeat) {
-                Text("Обойти каждого").tag(RuleSet.BidderMustBeat.eachOpponent)
-                Text("Обойти обоих вместе").tag(RuleSet.BidderMustBeat.opponentsCombined)
-            }
-            Picker("Ничья", selection: $store.settings.rules.tieRule) {
-                Text("Висячий байт").tag(RuleSet.TieRule.hangingBait)
-                Text("Байт").tag(RuleSet.TieRule.bait)
-                Text("Каждый пишет свои").tag(RuleSet.TieRule.eachKeeps)
-            }
+    /// Обрезает имя до `nameLimit` и сохраняет; пустое поле — снова «Вы».
+    private func saveName(_ value: String) {
+        let limited = String(value.prefix(SettingsView.nameLimit))
+        guard limited == value else {
+            nameDraft = limited   // onChange сработает ещё раз и сохранит обрезанное
+            return
         }
+        let trimmed = limited.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stored = trimmed.isEmpty ? "Вы" : trimmed
+        if store.settings.playerName != stored { store.settings.playerName = stored }
     }
 
-    private var penaltiesSection: some View {
-        Section("Штрафы") {
-            Picker("За байты", selection: $store.settings.rules.baitPenaltyEvery) {
-                Text("Нет").tag(0)
-                Text("Каждый 2-й байт").tag(2)
-                Text("Каждый 3-й байт").tag(3)
-                Text("Каждый 4-й байт").tag(4)
+    private var rulesSection: some View {
+        Section {
+            NavigationLink {
+                RuleSettingsView()
+            } label: {
+                HStack {
+                    SettingLabel(title: "Правила партии", detail: rulesSummary)
+                    Spacer(minLength: 4)
+                }
             }
-            Stepper("Штраф за байты: \(store.settings.rules.baitPenaltyPoints)",
-                    value: $store.settings.rules.baitPenaltyPoints, in: 10...300, step: 10)
-            Toggle("Висячий байт считается", isOn: $store.settings.rules.hangingCountsAsBait)
-            Picker("Голый (без взяток)", selection: $store.settings.rules.nakedPenaltyEvery) {
-                Text("Без штрафа").tag(0)
-                Text("Каждый раз").tag(1)
-                Text("Каждый 2-й раз").tag(2)
-                Text("Каждый 3-й раз").tag(3)
+        } header: {
+            Text("Правила").formHeaderStyle()
+        } footer: {
+            Text("Соперников и их уровень выбирают в меню, перед новой партией.").formHeaderStyle()
+        }
+        .screenRow()
+    }
+
+    private var rulesSummary: String {
+        let rules = store.settings.rules
+        let target = "до \(Narrator.pointsGenitive(rules.targetScore))"
+        return rules == .house ? "Наши, \(target)" : "Изменены, \(target)"
+    }
+
+    private var aboutSection: some View {
+        Section {
+            LabeledContent("Версия", value: AppInfo.version)
+            if store.match != nil {
+                ProblemReportLink()
             }
-            Stepper("Штраф за голого: \(store.settings.rules.nakedPenaltyPoints)",
-                    value: $store.settings.rules.nakedPenaltyPoints, in: 10...300, step: 10)
+        } header: {
+            Text("О приложении").formHeaderStyle()
+        } footer: {
+            // Ссылка есть только при сохранённой партии — без неё и пояснять нечего.
+            if store.match != nil {
+                Text("«Сообщить о проблеме» готовит файл с партией и настройками — его можно отправить разработчику в Telegram или WhatsApp. Больше ничего не отправляется.")
+                    .formHeaderStyle()
+            }
+        }
+        .screenRow()
+    }
+}
+
+/// Подпись настройки: название и пояснение мелко под ним.
+struct SettingLabel: View {
+    let title: String
+    var detail: String? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .foregroundStyle(Theme.tableText)
+            if let detail {
+                Text(detail)
+                    .font(.footnote)
+                    .foregroundStyle(Theme.tableSecondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

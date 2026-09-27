@@ -1,123 +1,162 @@
 import SwiftUI
 import DebercKit
 
-/// Карта: лицом (если передана) или рубашкой.
+/// Карта лицом (если передана) или рубашкой. Пропорции 1:1.45; работает от 28 до 180 pt ширины.
+/// Уже 46 pt рисуется упрощённо: индекс и крупная масть.
+///
+/// - `dimmed` — карту сейчас нельзя сыграть: лёгкое затемнение в тон сукна.
+/// - `highlighted` — выбранная карта или карта, взявшая взятку: золотая обводка и тень выше.
+/// - `playable` — допустимая карта в ваш ход: мягкое золотое свечение снаружи.
+/// - `isTrump` — золотая звезда под угловым индексом; VoiceOver добавляет «козырь».
+/// - `fourColor`, `largeIndex` — включают режим и сами по себе, и через `.cardAppearance(...)`.
+/// - `showsBottomIndex` — нижний перевёрнутый индекс; в веере руки его стоит скрывать
+///   у всех карт, кроме правой: он выглядывает из-под соседней карты обрывками.
 struct CardView: View {
     let card: Card?
     let width: CGFloat
-    var dimmed = false
-    var highlighted = false
+    var dimmed: Bool
+    var highlighted: Bool
+    var isTrump: Bool
+    var fourColor: Bool
+    var largeIndex: Bool
+    var showsBottomIndex: Bool
+    var playable: Bool
 
-    private var height: CGFloat { width * 1.45 }
-    private var corner: CGFloat { width * 0.1 }
+    @Environment(\.cardAppearance) private var appearance
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    init(card: Card?, width: CGFloat, dimmed: Bool = false, highlighted: Bool = false,
+         isTrump: Bool = false, fourColor: Bool = false, largeIndex: Bool = false,
+         showsBottomIndex: Bool = true, playable: Bool = false) {
+        self.card = card
+        self.width = width
+        self.dimmed = dimmed
+        self.highlighted = highlighted
+        self.isTrump = isTrump
+        self.fourColor = fourColor
+        self.largeIndex = largeIndex
+        self.showsBottomIndex = showsBottomIndex
+        self.playable = playable
+    }
+
+    /// Отношение высоты карты к ширине.
+    /// `nonisolated`: нужны геометрии стола и текстам вне главного актора (View — @MainActor).
+    nonisolated static let aspectRatio: CGFloat = CardMetrics.aspectRatio
+
+    /// Высота карты заданной ширины.
+    nonisolated static func height(forWidth width: CGFloat) -> CGFloat { width * aspectRatio }
+
+    /// «дама червей», «десятка бубен», «туз пик».
+    nonisolated static func spokenName(_ card: Card) -> String {
+        let suit: String
+        switch card.suit {
+        case .spades: suit = "пик"
+        case .clubs: suit = "треф"
+        case .diamonds: suit = "бубен"
+        case .hearts: suit = "червей"
+        }
+        return "\(card.rank.name) \(suit)"
+    }
 
     var body: some View {
+        let metrics = CardMetrics(
+            width: width,
+            largeIndex: largeIndex || appearance.largeIndex,
+            showsBottomIndex: showsBottomIndex,
+            isTrump: isTrump && card != nil)
+        let w = metrics.width
+        let shape = RoundedRectangle(cornerRadius: metrics.cornerRadius, style: .continuous)
+        let increased = contrast == .increased
+
         ZStack {
+            // Основа с тенями. Тени только у одной фигуры — дёшево даже при 30 картах на столе.
+            shape
+                .fill(LinearGradient(colors: [Theme.ivory, Theme.ivoryShade], startPoint: .top, endPoint: .bottom))
+                .shadow(color: Color.black.opacity(0.30), radius: max(0.5, w * 0.008), x: 0, y: max(0.5, w * 0.01))
+                .shadow(color: ambientShadowColor, radius: ambientShadowRadius(w),
+                        x: 0, y: playable && !highlighted ? 0 : ambientShadowOffset(w))
+
             if let card {
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .fill(Color.white)
-                CardFace(card: card, width: width, height: height)
+                CardFaceCanvas(card: card, metrics: metrics, fourColor: fourColor || appearance.fourColor)
+                    .equatable()
             } else {
-                CardBack(width: width, corner: corner)
+                CardBackCanvas(metrics: metrics, style: appearance.back)
+                    .equatable()
             }
-        }
-        .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: corner, style: .continuous)
-                .stroke(highlighted ? Theme.gold : Color.black.opacity(0.3), lineWidth: highlighted ? 3 : 0.8)
-        )
-        .overlay {
+
             if dimmed {
-                RoundedRectangle(cornerRadius: corner, style: .continuous)
-                    .fill(Color.black.opacity(0.38))
+                shape.fill(Theme.dimTint.opacity(increased ? 0.42 : 0.24))
+            }
+
+            if highlighted {
+                shape.strokeBorder(Theme.gold, lineWidth: max(2, w * 0.035))
+            } else if playable {
+                shape.strokeBorder(Theme.gold.opacity(0.9), lineWidth: max(1.5, w * 0.02))
+            } else {
+                shape.strokeBorder(Color.black.opacity(increased ? 0.5 : 0.22), lineWidth: metrics.hairline)
             }
         }
-        .shadow(color: .black.opacity(0.35), radius: highlighted ? 6 : 2, x: 0, y: 1)
-        .accessibilityElement()
-        .accessibilityLabel(card.map { "\($0.rank.name) \($0.suit.name)" } ?? "карта рубашкой")
+        .frame(width: w, height: metrics.height)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    private var ambientShadowColor: Color {
+        if highlighted { return Color.black.opacity(0.32) }
+        if playable { return Theme.gold.opacity(0.6) }
+        return Color.black.opacity(0.2)
+    }
+
+    private func ambientShadowRadius(_ w: CGFloat) -> CGFloat {
+        if w < CardMetrics.compactWidth { return max(1, w * 0.04) }
+        if highlighted { return w * 0.1 }
+        if playable { return w * 0.07 }
+        return w * 0.05
+    }
+
+    private func ambientShadowOffset(_ w: CGFloat) -> CGFloat {
+        highlighted ? w * 0.08 : w * 0.035
+    }
+
+    private var accessibilityText: String {
+        guard let card else { return "карта рубашкой" }
+        return isTrump ? "\(CardView.spokenName(card)), козырь" : CardView.spokenName(card)
     }
 }
 
-private struct CardFace: View {
-    let card: Card
-    let width: CGFloat
-    let height: CGFloat
-
-    private var color: Color { card.suit.color }
-    private var isFace: Bool { card.rank == .jack || card.rank == .queen || card.rank == .king }
-
-    var body: some View {
-        ZStack {
-            corner
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.leading, width * 0.07)
-                .padding(.top, width * 0.05)
-
-            center
-
-            corner
-                .rotationEffect(.degrees(180))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .padding(.trailing, width * 0.07)
-                .padding(.bottom, width * 0.05)
-        }
-        .foregroundStyle(color)
-    }
-
-    private var corner: some View {
-        VStack(spacing: -width * 0.05) {
-            Text(card.rank.symbol)
-                .font(.system(size: width * (card.rank == .ten ? 0.25 : 0.30), weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.5)
-                .lineLimit(1)
-            Text(card.suit.glyph)
-                .font(.system(size: width * 0.24))
-        }
-        .frame(width: width * 0.34)
-    }
-
-    @ViewBuilder
-    private var center: some View {
-        if isFace {
-            VStack(spacing: 0) {
-                Text(card.rank.symbol)
-                    .font(.system(size: width * 0.46, weight: .heavy, design: .serif))
-                Text(card.suit.glyph)
-                    .font(.system(size: width * 0.30))
+#if DEBUG
+struct CardView_Previews: PreviewProvider {
+    static var previews: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(Suit.allCases, id: \.self) { suit in
+                    HStack(spacing: 8) {
+                        ForEach(Rank.allCases, id: \.self) { rank in
+                            CardView(card: Card(rank, suit), width: 85, isTrump: suit == .hearts)
+                        }
+                    }
+                }
+                HStack(alignment: .bottom, spacing: 8) {
+                    ForEach([28, 36, 46, 64, 120] as [CGFloat], id: \.self) { w in
+                        CardView(card: Card(.queen, .hearts), width: w)
+                    }
+                    CardView(card: nil, width: 64)
+                }
+                HStack(spacing: 8) {
+                    CardView(card: Card(.ten, .diamonds), width: 85, fourColor: true, largeIndex: true)
+                    CardView(card: Card(.nine, .clubs), width: 85, dimmed: true)
+                    CardView(card: Card(.jack, .spades), width: 85, playable: true)
+                    CardView(card: Card(.ace, .hearts), width: 85, highlighted: true)
+                }
+                HStack(spacing: 12) {
+                    Button("Пас") {}.buttonStyle(TableButtonStyle())
+                    Button("Беру") {}.buttonStyle(TableButtonStyle(prominent: true))
+                    SuitBadge(suit: .hearts, size: 32)
+                }
             }
-            .padding(.vertical, width * 0.06)
-            .padding(.horizontal, width * 0.1)
-            .background(
-                RoundedRectangle(cornerRadius: width * 0.06)
-                    .stroke(color.opacity(0.35), lineWidth: 1)
-            )
-        } else {
-            Text(card.suit.glyph)
-                .font(.system(size: width * (card.rank == .ace ? 0.7 : 0.55)))
+            .padding()
         }
+        .background(FeltBackground())
     }
 }
-
-private struct CardBack: View {
-    let width: CGFloat
-    let corner: CGFloat
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: corner, style: .continuous)
-            .fill(
-                LinearGradient(colors: [Theme.backLight, Theme.backDark],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: corner * 0.7, style: .continuous)
-                    .stroke(Color.white.opacity(0.65), lineWidth: max(1, width * 0.025))
-                    .padding(width * 0.08)
-            )
-            .overlay(
-                Text("♦\u{FE0E}")
-                    .font(.system(size: width * 0.34))
-                    .foregroundStyle(Color.white.opacity(0.45))
-            )
-    }
-}
+#endif

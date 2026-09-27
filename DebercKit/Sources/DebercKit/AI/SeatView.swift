@@ -1,8 +1,9 @@
 import Foundation
 
 /// То, что видит один игрок: его карты и всё открытое на столе.
-/// Боты принимают решения только по этому представлению — без подглядывания.
-public struct SeatView: Sendable {
+/// Боты принимают решения только по этому представлению — без подглядывания:
+/// `Bot.chooseAction(view:rng:)` не получает ни чужих рук, ни прикупа, ни колоды.
+public struct SeatView: Equatable, Sendable {
     public let seat: Int
     public let playerCount: Int
     public let rules: RuleSet
@@ -26,10 +27,17 @@ public struct SeatView: Sendable {
     public let knownBellaSeat: Int?
     public let exchange: SevenExchangeRecord?
     public let seatsFromDealer: [Int]
+    /// Последовательности победителя объявлений — их карты показаны всем.
+    public let winnerMelds: [Meld]
+    // Партия.
     public let pot: Int
     public let baitCounts: [Int]
     public let nakedCounts: [Int]
     public let totals: [Int]
+    /// Сколько сдач подряд все спасовали (для «обязов»).
+    public let allPassStreak: Int
+    /// Сдача «на обязах» (торговли нет).
+    public let forced: Bool
 
     public init(match: Match, seat: Int) {
         let deal = match.deal!
@@ -69,27 +77,51 @@ public struct SeatView: Sendable {
         baitCounts = match.baitCounts
         nakedCounts = match.nakedCounts
         totals = match.totals
+        allPassStreak = match.allPassStreak
+        forced = deal.forced
     }
-
-    /// Последовательности победителя объявлений — их карты показаны всем.
-    public let winnerMelds: [Meld]
 
     public var playedCards: [Card] { tricks.flatMap(\.cards) + currentTrick.cards }
 
     public func next(_ s: Int) -> Int { (s + 1) % playerCount }
 
+    /// Порядок хода в розыгрыше при данном играющем, начиная с первого ходящего.
+    /// Так же, как в `Deal.startPlay`: старшинство равных комбинаций и делёж нечётного очка.
+    public func leadOrder(bidder: Int) -> [Int] {
+        Deal.leadOrder(dealer: dealer, bidder: bidder, playerCount: playerCount, rules: rules)
+    }
+
+    /// Порядок хода в розыгрыше для текущего играющего; пока его нет — `seatsFromDealer`.
+    public var leadOrder: [Int] { bidder.map { leadOrder(bidder: $0) } ?? seatsFromDealer }
+
+    /// Мой ли сейчас ход (сдача не окончена).
+    public var isMyTurn: Bool { turn == seat && phase != .finished }
+
+    /// Кто сдаёт «на обязах», если и эта сдача закончится «все пас» (иначе nil).
+    /// После «все пас» сдаёт следующий по кругу при любом правиле смены сдающего.
+    public var forcedSeatIfAllPass: Int? {
+        guard rules.forcedDealAfterRedeals > 0,
+              allPassStreak + 1 >= rules.forcedDealAfterRedeals else { return nil }
+        return next(dealer)
+    }
+
     /// Масти, которых точно нет у игроков (по тому, как они ходили).
     public var voids: [Set<Suit>] {
-        var result = [Set<Suit>](repeating: [], count: playerCount)
+        voidMasks.map { m in Set(Suit.allCases.filter { m & (1 << $0.rawValue) != 0 }) }
+    }
+
+    /// То же, что `voids`, битами мастей.
+    var voidMasks: [Int] {
+        var result = [Int](repeating: 0, count: playerCount)
         guard let trump else { return result }
         var all = tricks
         if !currentTrick.plays.isEmpty { all.append(currentTrick) }
         for trick in all {
             guard let led = trick.ledSuit else { continue }
             for play in trick.plays.dropFirst() where play.card.suit != led {
-                result[play.seat].insert(led)
+                result[play.seat] |= 1 << led.rawValue
                 if rules.mustTrump && play.card.suit != trump {
-                    result[play.seat].insert(trump)
+                    result[play.seat] |= 1 << trump.rawValue
                 }
             }
         }
@@ -113,5 +145,54 @@ public struct SeatView: Sendable {
             add(Card(.queen, trump), to: b)
         }
         return result
+    }
+
+    /// Устойчивый отпечаток позиции (FNV-1a) по всему, что видит игрок.
+    /// Одинаков в любом процессе и при любом порядке карт на руке; чужие карты в него не входят.
+    public var positionHash: UInt64 {
+        var h: UInt64 = 0xcbf2_9ce4_8422_2325
+        func mix(_ x: Int) {
+            var v = UInt64(bitPattern: Int64(x))
+            for _ in 0..<8 {
+                h ^= v & 0xFF
+                h = h &* 0x0000_0100_0000_01B3
+                v >>= 8
+            }
+        }
+        mix(seat); mix(playerCount); mix(dealer); mix(turn)
+        switch phase {
+        case .bidding(let round): mix(10 + round)
+        case .exchange: mix(20)
+        case .playing: mix(30)
+        case .finished: mix(40)
+        }
+        mix(Int(truncatingIfNeeded: mask(of: myHand)))
+        for c in handCounts { mix(c) }
+        mix(openCard.id)
+        mix(bottomCard?.id ?? 99)
+        mix(trump?.rawValue ?? 9)
+        mix(bidder ?? 9)
+        for bid in bids {
+            let kind: Int
+            switch bid.kind {
+            case .pass: kind = 1
+            case .take: kind = 2
+            case .name: kind = 3
+            case .forced: kind = 4
+            }
+            mix(bid.seat * 1000 + bid.round * 100 + (bid.suit?.rawValue ?? 9) * 10 + kind)
+        }
+        mix(-1)
+        for trick in tricks + [currentTrick] {
+            for p in trick.plays { mix(p.seat * 100 + p.card.id) }
+            mix(-2)
+        }
+        mix(meldWinner ?? 9); mix(meldWinnerPoints); mix(knownBellaSeat ?? 9)
+        if let ex = exchange { mix(ex.seat * 100 + ex.took.id) }
+        mix(pot)
+        for x in baitCounts + nakedCounts + totals { mix(x) }
+        mix(allPassStreak)
+        mix(forced ? 1 : 0)
+        return h
     }
 }

@@ -94,6 +94,10 @@ public struct RuleSet: Codable, Equatable, Sendable {
     public var fourSevensBonus = 100
     /// Считаются ли 4 семёрки после прикупа (до первого хода).
     public var fourSevensAfterPrikup = true
+    /// Пересдача из-за 4 семёрок не сбрасывает счёт пересдач до «обязов»:
+    /// если это были обязы, следующая сдача — снова обязы (у нового сдающего).
+    /// Если выключено — после 4 семёрок счёт пересдач начинается заново.
+    public var fourSevensKeepsForcedStreak = true
     public var bottomCard = BottomCard.afterPrikup
 
     // MARK: Комбинации
@@ -102,6 +106,9 @@ public struct RuleSet: Codable, Equatable, Sendable {
     /// 5 и больше карт подряд — «сотня» (100). Если выключено — это тоже полтинник.
     public var hundredForFive = false
     public var bellaPoints = 20
+    /// Король и дама бэлы могут одновременно входить в терц или полтинник.
+    /// Если выключено — у игрока с бэлой эти две карты в последовательностях не считаются.
+    public var bellaInMelds = true
     public var meldOrder = MeldOrder.longerFirst
     public var combosNeedTrick = CombosNeedTrick.all
 
@@ -131,15 +138,16 @@ public struct RuleSet: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case targetScore, forcedDealAfterRedeals, sevenExchange, firstLead, dealerRotation
-        case fourSevens, fourSevensBonus, fourSevensAfterPrikup, bottomCard
-        case terzPoints, fiftyPoints, hundredForFive, bellaPoints, meldOrder, combosNeedTrick
+        case fourSevens, fourSevensBonus, fourSevensAfterPrikup, fourSevensKeepsForcedStreak, bottomCard
+        case terzPoints, fiftyPoints, hundredForFive, bellaPoints, bellaInMelds, meldOrder, combosNeedTrick
         case mustTrump, overtrump
         case baitTransfer, baitRecipient, bidderMustBeat, tieRule
         case baitPenaltyEvery, baitPenaltyPoints, hangingCountsAsBait, nakedPenaltyEvery, nakedPenaltyPoints
     }
 
     /// Терпимое к старым сохранениям чтение: отсутствующие или неизвестные значения
-    /// заменяются значениями по умолчанию.
+    /// заменяются значениями по умолчанию, лишние ключи пропускаются.
+    /// Новое поле правил добавлять сюда же, в `CodingKeys` и в этот инициализатор.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = RuleSet()
@@ -154,11 +162,13 @@ public struct RuleSet: Codable, Equatable, Sendable {
         fourSevens = value(.fourSevens, d.fourSevens)
         fourSevensBonus = value(.fourSevensBonus, d.fourSevensBonus)
         fourSevensAfterPrikup = value(.fourSevensAfterPrikup, d.fourSevensAfterPrikup)
+        fourSevensKeepsForcedStreak = value(.fourSevensKeepsForcedStreak, d.fourSevensKeepsForcedStreak)
         bottomCard = value(.bottomCard, d.bottomCard)
         terzPoints = value(.terzPoints, d.terzPoints)
         fiftyPoints = value(.fiftyPoints, d.fiftyPoints)
         hundredForFive = value(.hundredForFive, d.hundredForFive)
         bellaPoints = value(.bellaPoints, d.bellaPoints)
+        bellaInMelds = value(.bellaInMelds, d.bellaInMelds)
         meldOrder = value(.meldOrder, d.meldOrder)
         combosNeedTrick = value(.combosNeedTrick, d.combosNeedTrick)
         mustTrump = value(.mustTrump, d.mustTrump)

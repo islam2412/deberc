@@ -2,56 +2,132 @@ import SwiftUI
 import UIKit
 import DebercKit
 
-/// Состояние приложения и «дирижёр» партии: применяет ходы, запускает ботов,
-/// держит паузы, чтобы было видно, кто чем сходил.
+/// Состояние приложения и «дирижёр» партии: применяет ходы, запускает соперников,
+/// держит паузы, чтобы было видно, кто чем сходил, сохраняет партию и статистику.
+///
+/// Решения «что дальше» принимает `GameFlow` (чистые функции), здесь — только исполнение:
+/// ожидание, анимация, звук, сохранение. Один магазин на всё приложение — и на iPad
+/// с несколькими окнами: фаза сцены приходит от приложения целиком, автоблокировкой
+/// экрана управляет только он.
 @MainActor
 final class GameStore: ObservableObject {
     /// Место человека за столом.
     let humanSeat = 0
 
+    // MARK: - Состояние для экранов
+
     @Published private(set) var match: Match?
     @Published var settings: AppSettings {
-        didSet { Storage.saveSettings(settings) }
+        didSet { settingsDidChange(from: oldValue) }
     }
-    @Published var isInGame = false
-
-    /// Реплики игроков при торговле («Пас», «Беру ♥»).
+    /// Открыт стол (иначе — меню). Можно менять и из экранов: `false` — то же, что `leaveGame()`.
+    @Published var isInGame = false {
+        didSet { if oldValue != isInGame { inGameDidChange() } }
+    }
+    /// Соперники текущей партии: `opponents[i]` сидит на месте i + 1.
+    @Published private(set) var opponents: [Persona] = []
+    @Published private(set) var stats: PlayerStats
+    /// Реплики игроков при торговле по местам.
     @Published private(set) var bubbles: [Int: String] = [:]
     /// Текущее всплывающее сообщение.
     @Published private(set) var banner: String?
-    /// Только что собранная взятка — показывается на столе несколько секунд.
+    /// Сообщение срочное (ошибка хода, совет, бэла) — его можно выделить цветом.
+    @Published private(set) var bannerIsUrgent = false
+    /// Только что собранная взятка — лежит на столе, пока её не соберут.
     @Published private(set) var displayedTrick: Trick?
-    /// Кто из компьютеров сейчас думает.
+    /// Кто из соперников сейчас думает.
     @Published private(set) var thinkingSeat: Int?
     /// Выбранная (приподнятая) карта на руке.
     @Published private(set) var selectedCard: Card?
-    /// Подсказка для торговли.
-    @Published private(set) var bidHint: String?
-    @Published var showDealSummary = false
+    /// Совет (торговля, обмен семёрки или ход) — для подсветки.
+    @Published private(set) var hintAction: Action?
+    /// Совет считается.
+    @Published private(set) var isHinting = false
+    @Published var showDealSummary = false {
+        didSet { if oldValue != showDealSummary { updateIdleTimer() } }
+    }
+    /// Экраны ставят `true`, пока открыт лист или диалог: игра на паузе.
+    @Published var isOverlayPresented = false {
+        didSet { if oldValue != isOverlayPresented { pauseDidChange() } }
+    }
+    /// Экран из аргумента запуска `-DebercScreen` (для CI и скриншотов); экраны открывают его сами.
+    @Published var requestedScreen: String?
+    /// Сколько раз в этой партии брали совет и отменяли ход.
+    @Published private(set) var hintsUsed = 0
+    @Published private(set) var undosUsed = 0
+    /// Сохранённую партию прочитать не удалось (файл отложен в сторону) — сказать об этом в меню.
+    @Published var loadProblem: String?
+
+    @Published private var isSceneActive = true
+    @Published private var undoStack: [Match] = []
+
+    // MARK: - Внутреннее состояние
+
+    private let options: LaunchOptions
+    /// Автоигра (только по аргументу `-DebercAutoplay YES`): за человека тоже играет компьютер.
+    private let autoplay: Bool
+    private let storage: Storage
+    private let sounds = SoundPlayer()
+    private var rng: SplitMix64
+    /// Зерно запуска: с ним автоигру можно повторить (`-DebercSeed`).
+    private let launchSeed: UInt64
+
+    private var gameID = UUID()
+    private var startedAt = Date()
 
     private var driver: Task<Void, Never>?
     private var bannerTask: Task<Void, Never>?
-    private var bannerQueue: [String] = []
-    private var rng: SplitMix64
-    /// Автоигра для проверки на симуляторе: за человека тоже играет компьютер.
-    /// Включается только аргументом запуска `-DebercAutoplay YES`.
-    private let autoplay: Bool
+    private var bannerQueue = BannerQueue()
+    private var bannerGeneration = 0
+    private var bannerShownAt = Date.distantPast
+    private var hintTask: Task<Void, Never>?
+    private var hintToken = 0
+    private var hintCache: (match: Match, action: Action)?
+    private var idleTask: Task<Void, Never>?
+    private var lastActivity = Date()
+    private var pauseEpoch = 0
+    private var lastStepWasBot = false
+    private var normalizingSettings = false
+    private var autoplayDeals = 0
+    private var autoplayMatches = 0
+    /// Сдача закончилась на глазах у игрока (а не прочитана из сохранения) — звук и вибрация итога уместны.
+    private var dealEndedLive = false
+    /// Когда человек последний раз сходил или отменил ход. Второе касание двойного тапа
+    /// не должно стать ещё одним действием: под пальцем уже другая кнопка или карта.
+    private var lastHumanActionAt = Date.distantPast
+    /// Столько секунд после своего хода или отмены новое касание не считается действием.
+    private static let repeatTapGuard: TimeInterval = 0.4
 
     init() {
-        let defaults = UserDefaults.standard
-        autoplay = defaults.bool(forKey: "DebercAutoplay")
-        settings = Storage.loadSettings()
-        match = Storage.loadMatch()
-        rng = SplitMix64(seed: UInt64.random(in: 0...UInt64.max))
-        if autoplay {
-            let players = defaults.integer(forKey: "DebercPlayers")
-            settings.playerCount = players == 3 ? 3 : 2
-            settings.speed = .fast
-            newGame()
+        let options = LaunchOptions(defaults: .standard)
+        let storage = Storage(space: options.isDemo ? .demo : .user)
+        self.options = options
+        self.autoplay = options.autoplay
+        self.storage = storage
+        settings = options.isDemo ? options.demoSettings() : storage.loadSettings()
+        stats = storage.loadStats()
+        // Экраны для скриншотов — с постоянным зерном, чтобы кадры повторялись; автоигра — каждый раз своя.
+        let fixedDemoSeed: UInt64? = options.screen != nil && !options.autoplay ? 20_260_927 : nil
+        let seed = options.seed ?? fixedDemoSeed ?? UInt64.random(in: 0...UInt64.max)
+        launchSeed = seed
+        rng = SplitMix64(seed: seed)
+        requestedScreen = options.screenName
+        sounds.soundEnabled = settings.soundEnabled && !autoplay
+        sounds.hapticsEnabled = settings.hapticsEnabled && !autoplay
+
+        if options.isDemo {
+            startDemo()
+        } else {
+            restoreSavedGame()
         }
     }
 
     // MARK: - Свойства для экранов
+
+    /// Пауза: открыт лист/диалог или приложение не на экране.
+    var isPaused: Bool {
+        isOverlayPresented || (!isSceneActive && !autoplay)
+    }
 
     var canContinue: Bool {
         guard let match else { return false }
@@ -59,7 +135,8 @@ final class GameStore: ObservableObject {
     }
 
     var isHumanTurn: Bool {
-        match?.actor == humanSeat && displayedTrick == nil
+        guard isInGame, let match, match.actor == humanSeat else { return false }
+        return displayedTrick == nil && !showDealSummary
     }
 
     /// Карты, которыми человек может сходить сейчас.
@@ -68,120 +145,290 @@ final class GameStore: ObservableObject {
         return Set(deal.legalCards(for: humanSeat))
     }
 
+    /// Можно отменить своё последнее действие: только в идущей сдаче.
+    var canUndo: Bool {
+        guard !autoplay, isInGame, !undoStack.isEmpty, let match, !match.isOver,
+              let deal = match.deal, !deal.isFinished else { return false }
+        return true
+    }
+
+    /// Последняя собранная взятка текущей сдачи.
+    var lastTrick: Trick? {
+        match?.deal?.tricks.last
+    }
+
+    /// Текст совета для панели торговли и обмена семёрки (nil — совета нет).
+    var bidHint: String? {
+        guard let hintAction else { return nil }
+        if case .play = hintAction { return nil }
+        return GameFlow.hintText(hintAction, deal: match?.deal)
+    }
+
+    /// Персонаж на месте (nil — человек или место пустое).
+    func persona(for seat: Int) -> Persona? {
+        guard seat != humanSeat else { return nil }
+        let index = seat < humanSeat ? seat : seat - 1
+        return opponents.indices.contains(index) ? opponents[index] : nil
+    }
+
+    /// «Вы» для человека, имя персонажа для соперника.
+    func displayName(for seat: Int) -> String {
+        if seat == humanSeat { return "Вы" }
+        if let persona = persona(for: seat) { return persona.name }
+        if let names = match?.names, names.indices.contains(seat) { return names[seat] }
+        return "Игрок \(seat + 1)"
+    }
+
     // MARK: - Управление партией
 
+    /// Новая партия по настройкам: число игроков, соперники, правила.
     func newGame() {
-        driver?.cancel()
-        let count = settings.playerCount
-        var names = [settings.playerName.trimmingCharacters(in: .whitespaces)]
-        if names[0].isEmpty { names[0] = "Вы" }
-        for i in 0..<(count - 1) {
-            let name = i < settings.botNames.count ? settings.botNames[i].trimmingCharacters(in: .whitespaces) : ""
-            names.append(name.isEmpty ? "Бот \(i + 1)" : name)
-        }
-        match = Match(playerCount: count, names: names, rules: settings.rules, seed: rng.next())
-        resetTransient()
-        bannerQueue.removeAll()
-        banner = nil
-        showDealSummary = false
+        setUpNewMatch(playerCount: settings.playerCount, rules: settings.rules,
+                      opponents: chosenOpponents(count: settings.playerCount - 1))
         isInGame = true
+        sounds.prepare()
+        startNextDeal()
+    }
+
+    /// Новая партия с теми же соперниками и правилами.
+    func rematch() {
+        guard let old = match else {
+            newGame()
+            return
+        }
+        let count = old.playerCount - 1
+        let same = opponents.count == count
+            ? opponents
+            : GameFlow.opponents(ids: opponents.map(\.id), count: count, fallback: settings.difficulty)
+        setUpNewMatch(playerCount: old.playerCount, rules: old.rules, opponents: same)
+        isInGame = true
+        sounds.prepare()
         startNextDeal()
     }
 
     func continueGame() {
         guard let match else { return }
+        driver?.cancel()
         resetTransient()
+        clearBanners()
+        bubbles = GameFlow.bubbles(for: match.deal, phrase: phrase(for:))
         isInGame = true
+        sounds.prepare()
+        noteActivity()
+        persist()
         if match.deal == nil {
             startNextDeal()
             return
-        }
-        if match.isOver || (match.needsNewDeal && match.history.last?.outcome != .allPassed) {
-            showDealSummary = true
         }
         drive()
     }
 
     func leaveGame() {
-        driver?.cancel()
-        driver = nil
-        thinkingSeat = nil
-        showDealSummary = false
         isInGame = false
     }
 
     func startNextDeal() {
         guard var current = match, current.needsNewDeal else { return }
+        driver?.cancel()
         showDealSummary = false
         resetTransient()
+        clearBanners()
+        undoStack.removeAll()
         let events = current.startNextDeal()
-        match = current
-        process(events)
+        withAnimation(animation(.easeInOut(duration: 0.35))) {
+            match = current
+            process(events)
+        }
+        sounds.play(.deal)
+        noteActivity()
         persist()
+        reportProgress()
         drive()
     }
 
     // MARK: - Действия человека
 
+    /// Действие человека: торговля, обмен семёрки или ход картой.
     func perform(_ action: Action) {
         guard isHumanTurn, var current = match else { return }
+        // Второе касание двойного тапа попадает в новую кнопку на том же месте («Беру» → «Взять … за 7»)
+        // или в карту после сбора взятки — такой «ход» отбрасываем.
+        guard !isRepeatTap else { return }
+        let before = current
         do {
             let events = try current.apply(action)
-            match = current
-            selectedCard = nil
-            bidHint = nil
-            if case .play = action {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            lastHumanActionAt = Date()
+            cancelHint()
+            lastStepWasBot = false
+            if !autoplay {
+                undoStack.append(before)
+                if undoStack.count > 30 { undoStack.removeFirst() }
             }
-            process(events)
+            withAnimation(animation(.spring(response: 0.35, dampingFraction: 0.82))) {
+                selectedCard = nil
+                hintAction = nil
+                match = current
+                process(events)
+            }
+            if case .play = action { sounds.haptic(.tap) }
+            noteActivity()
             persist()
+            reportProgress()
             drive()
         } catch {
-            showBanner("Так сейчас нельзя")
+            if case .play(let card) = action, let deal = current.deal {
+                rejectCard(card, in: deal)
+            } else {
+                showBanner("Так сейчас нельзя", urgent: true)
+                sounds.play(.error)
+                sounds.haptic(.warning)
+            }
         }
     }
 
+    /// Касание карты на руке: с двойным касанием первое выбирает, второе ходит.
+    /// Пока на столе лежит собранная взятка, касание сразу её убирает.
     func tapCard(_ card: Card) {
+        if displayedTrick != nil { collectTrick() }
         guard isHumanTurn, let deal = match?.deal, deal.phase == .playing else { return }
+        noteActivity()
         guard deal.legalCards(for: humanSeat).contains(card) else {
-            showBanner(illegalReason(deal))
+            rejectCard(card, in: deal)
             return
         }
         if settings.confirmCardTap && selectedCard != card {
-            withAnimation(.easeOut(duration: 0.15)) { selectedCard = card }
+            withAnimation(animation(.easeOut(duration: 0.15))) { selectedCard = card }
+            sounds.haptic(.select)
             return
         }
         perform(.play(card))
     }
 
-    /// Совет сильного бота.
+    /// Выбор карты ведением пальца по руке (nil — снять выбор). Недопустимую карту не поднимает.
+    func selectCard(_ card: Card?) {
+        guard let card else {
+            if selectedCard != nil {
+                withAnimation(animation(.easeOut(duration: 0.15))) { selectedCard = nil }
+            }
+            return
+        }
+        guard isHumanTurn, selectedCard != card else { return }
+        noteActivity()
+        withAnimation(animation(.easeOut(duration: 0.15))) {
+            selectedCard = legalCards.contains(card) ? card : nil
+        }
+        if selectedCard == card { sounds.haptic(.select) }
+    }
+
+    /// Убрать собранную взятку со стола сразу, не дожидаясь паузы.
+    func collectTrick() {
+        guard displayedTrick != nil else { return }
+        gatherTrick()
+        noteActivity()
+        drive()
+    }
+
+    /// Совет Мастера для текущего решения: торговля, обмен семёрки или ход.
+    /// В одной и той же позиции — всегда один и тот же.
     func showHint() {
         guard isHumanTurn, let snapshot = match else { return }
-        let seed = rng.next()
+        noteActivity()
+        if let cached = hintCache, cached.match == snapshot {
+            presentHint(cached.action)
+            return
+        }
+        guard hintTask == nil else { return }
+        hintToken &+= 1
+        let token = hintToken
         let seat = humanSeat
-        Task {
-            let action = await Task.detached(priority: .userInitiated) { () -> Action in
-                var local = SplitMix64(seed: seed)
-                return Bot(level: .hard).chooseAction(match: snapshot, seat: seat, rng: &local)
+        isHinting = true
+        hintTask = Task { [weak self] in
+            let action = await Task.detached(priority: .userInitiated) { () -> Action? in
+                Bot.hint(match: snapshot, seat: seat)
             }.value
-            guard self.match == snapshot else { return }
-            switch action {
-            case .play(let card):
-                withAnimation(.easeOut(duration: 0.15)) { self.selectedCard = card }
-                self.showBanner("Совет: \(card)")
-            case .take:
-                self.bidHint = "Совет: брать"
-            case .name(let suit):
-                self.bidHint = "Совет: играть \(suit.symbol)"
-            case .pass:
-                self.bidHint = "Совет: пас"
-            case .exchangeSeven:
-                self.bidHint = "Совет: поменять"
-            }
+            guard let self, token == self.hintToken else { return }
+            self.hintTask = nil
+            self.isHinting = false
+            guard !Task.isCancelled, self.match == snapshot, let action else { return }
+            self.hintCache = (snapshot, action)
+            self.hintsUsed += 1
+            self.presentHint(action)
+            self.persist()
         }
     }
 
-    // MARK: - Ходы компьютера
+    /// Отменить своё последнее действие (до конца сдачи). Соперники потом могут сыграть иначе.
+    func undo() {
+        // Двойное касание «Отменить» не должно отменять два хода (и сразу отменять только что сделанный).
+        guard canUndo, !isRepeatTap, let previous = undoStack.popLast() else { return }
+        lastHumanActionAt = Date()
+        driver?.cancel()
+        resetTransient()
+        clearBanners()
+        undosUsed += 1
+        withAnimation(animation(.easeInOut(duration: 0.3))) {
+            match = previous
+            bubbles = GameFlow.bubbles(for: previous.deal, phrase: phrase(for:))
+        }
+        sounds.play(.collect)
+        sounds.haptic(.soft)
+        showBanner("Ход отменён", urgent: true)
+        noteActivity()
+        persist()
+        reportProgress()
+        drive()
+    }
+
+    /// Касание пришло сразу после своего хода или отмены — это второе касание двойного тапа.
+    private var isRepeatTap: Bool {
+        Date().timeIntervalSince(lastHumanActionAt) < Self.repeatTapGuard
+    }
+
+    // MARK: - Сообщения
+
+    func showBanner(_ text: String) {
+        showBanner(text, urgent: false)
+    }
+
+    /// Срочное сообщение (ошибка хода, совет) показывается сразу, не дожидаясь очереди.
+    func showBanner(_ text: String, urgent: Bool) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if urgent {
+            let current = banner.map { BannerQueue.Item(text: $0, urgent: bannerIsUrgent) }
+            bannerQueue.pushUrgent(text, current: current, shownFor: Date().timeIntervalSince(bannerShownAt))
+            pumpBanners()
+        } else if bannerQueue.pushInfo(text, current: banner), bannerTask == nil {
+            pumpBanners()
+        }
+    }
+
+    // MARK: - Приложение
+
+    /// Приложение на экране (сцена активна) или нет: не на экране — пауза и сохранение.
+    func setScenePhaseActive(_ active: Bool) {
+        guard active != isSceneActive else { return }
+        isSceneActive = active
+        if active {
+            sounds.resume()
+            noteActivity()
+        } else {
+            persist()
+            storage.flush()
+        }
+        pauseDidChange()
+    }
+
+    /// Стереть статистику.
+    func resetStats() {
+        var fresh = PlayerStats()
+        // Доигранная партия остаётся в сохранении — без метки её снова запишут при запуске (adopt).
+        fresh.lastRecordedMatch = stats.lastRecordedMatch
+        stats = fresh
+        storage.saveStats(fresh)
+    }
+
+    // MARK: - Ход партии
 
     private func drive() {
         driver?.cancel()
@@ -192,127 +439,570 @@ final class GameStore: ObservableObject {
 
     private func runLoop() async {
         while !Task.isCancelled {
-            if displayedTrick != nil {
-                try? await Task.sleep(for: settings.speed.trickPause)
-                if Task.isCancelled { return }
-                withAnimation(.easeInOut(duration: 0.25)) { displayedTrick = nil }
-                continue
-            }
-            guard let snapshot = match else { return }
-            if snapshot.isOver || snapshot.needsNewDeal {
-                thinkingSeat = nil
-                // «Все пас» — просто пересдаём, без окна итогов.
-                if !snapshot.isOver, snapshot.history.last?.outcome == .allPassed {
-                    try? await Task.sleep(for: settings.speed.bannerTime)
-                    if Task.isCancelled { return }
-                    startNextDeal()
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(400))
-                if Task.isCancelled { return }
-                withAnimation(.easeInOut(duration: 0.3)) { showDealSummary = true }
-                if autoplay {
-                    try? await Task.sleep(for: .milliseconds(2500))
-                    if Task.isCancelled { return }
-                    if snapshot.isOver { newGame() } else { startNextDeal() }
-                }
-                return
-            }
-            guard let actor = snapshot.actor, actor != humanSeat || autoplay else {
+            guard isInGame, await waitWhilePaused() else { return }
+            let step = GameFlow.nextStep(match: match, displayedTrick: displayedTrick,
+                                         showingSummary: showDealSummary, humanSeat: humanSeat,
+                                         autoplay: autoplay)
+            switch step {
+            case .idle:
                 thinkingSeat = nil
                 return
-            }
-            thinkingSeat = actor
-            let level = settings.botLevel
-            let seed = rng.next()
-            let started = Date()
-            let action = await Task.detached(priority: .userInitiated) { () -> Action in
-                var local = SplitMix64(seed: seed)
-                return Bot(level: level).chooseAction(match: snapshot, seat: actor, rng: &local)
-            }.value
-            let remaining = settings.speed.botDelay - .milliseconds(Int(Date().timeIntervalSince(started) * 1000))
-            if remaining > .zero {
-                try? await Task.sleep(for: remaining)
-            }
-            if Task.isCancelled { return }
-            guard var current = match, current == snapshot else { return }
-            do {
-                let events = try current.apply(action)
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    match = current
-                }
-                process(events)
-                persist()
-            } catch {
-                thinkingSeat = nil
+
+            case .startDeal:
+                startNextDeal()
                 return
+
+            case .collectTrick:
+                thinkingSeat = nil
+                guard await visibleSleep(settings.speed.trickPause) else { return }
+                gatherTrick()
+
+            case .redeal:
+                thinkingSeat = nil
+                if autoplay, let match { traceDeal(match) }
+                guard await visibleSleep(settings.speed.bannerTime) else { return }
+                startNextDeal()
+                return
+
+            case .showSummary:
+                thinkingSeat = nil
+                guard await visibleSleep(.milliseconds(450)) else { return }
+                presentSummary()
+                await advanceAutoplayIfNeeded()
+                return
+
+            case .waitSummary:
+                thinkingSeat = nil
+                await advanceAutoplayIfNeeded()
+                return
+
+            case .waitHuman:
+                thinkingSeat = nil
+                if lastStepWasBot { sounds.haptic(.turn) }
+                lastStepWasBot = false
+                return
+
+            case .botMove(let seat):
+                guard await botMove(seat) else { return }
+                lastStepWasBot = true
             }
         }
     }
 
-    // MARK: - События
+    /// Ход компьютера: считает в фоне, «думает» по трудности решения, затем ходит.
+    /// false — цикл нужно остановить.
+    private func botMove(_ seat: Int) async -> Bool {
+        guard let snapshot = match else { return false }
+        thinkingSeat = seat == humanSeat ? nil : seat
+        let bot = makeBot(for: seat)
+        let seed = rng.next()
+        let jitter = 0.85 + 0.3 * Double(rng.next() % 1000) / 1000
+        let clock = ContinuousClock()
+        let started = clock.now
+        let decision = await Task.detached(priority: .userInitiated) { () -> (Action, Double) in
+            var local = SplitMix64(seed: seed)
+            let action = bot.chooseAction(match: snapshot, seat: seat, rng: &local)
+            return (action, Bot.decisionWeight(match: snapshot, seat: seat))
+        }.value
+        if Task.isCancelled { return false }
+
+        let target = ThinkingTime.delay(base: settings.speed.botDelay, weight: decision.1, jitter: jitter)
+        let elapsed = started.duration(to: clock.now)
+        if target > elapsed {
+            guard await visibleSleep(target - elapsed) else { return false }
+        }
+        guard await waitWhilePaused() else { return false }
+        // Пока думали, партия могла измениться (отмена хода, новая партия) — решаем заново.
+        guard var current = match, current == snapshot else { return true }
+
+        do {
+            let events = try current.apply(decision.0)
+            commitBotMove(current, events)
+            return true
+        } catch {
+            Diagnostics.log("Компьютер (место \(seat)) сделал недопустимый ход \(decision.0): \(error)")
+            if autoplay {
+                Diagnostics.trace("ERROR bot seat=\(seat) action=\(decision.0): \(error)")
+                reportProgress(phase: "error")
+                fatalError("Автоигра: недопустимый ход компьютера \(decision.0): \(error)")
+            }
+            var retry = snapshot
+            if let fallback = snapshot.deal?.legalActions().first, let events = try? retry.apply(fallback) {
+                commitBotMove(retry, events)
+                return true
+            }
+            thinkingSeat = nil
+            showBanner("Компьютер не смог сходить. Выйдите в меню и продолжите партию", urgent: true)
+            return false
+        }
+    }
+
+    private func commitBotMove(_ updated: Match, _ events: [DealEvent]) {
+        thinkingSeat = nil
+        withAnimation(animation(.easeInOut(duration: 0.3))) {
+            hintAction = nil
+            match = updated
+            process(events)
+        }
+        noteActivity()
+        persist()
+        reportProgress()
+    }
+
+    private func makeBot(for seat: Int) -> Bot {
+        if let persona = persona(for: seat) { return Bot(persona: persona) }
+        return Bot(level: options.level ?? settings.difficulty)
+    }
+
+    private func gatherTrick() {
+        guard displayedTrick != nil else { return }
+        withAnimation(animation(.easeInOut(duration: 0.35))) { displayedTrick = nil }
+        sounds.play(.collect)
+    }
+
+    private func presentSummary() {
+        guard let match else { return }
+        clearBanners()
+        withAnimation(animation(.easeInOut(duration: 0.3))) { showDealSummary = true }
+        let live = dealEndedLive
+        dealEndedLive = false
+        if match.isOver {
+            recordStatsIfNeeded()
+            if live {
+                let won = match.winner == humanSeat
+                sounds.play(won ? .win : .lose)
+                sounds.haptic(won ? .success : .warning)
+            }
+        } else if live, let last = match.history.last, last.bidder == humanSeat {
+            switch last.outcome {
+            case .made: sounds.haptic(.success)
+            case .bait, .hanging: sounds.haptic(.warning)
+            default: break
+            }
+        }
+        if autoplay { traceDeal(match) }
+        reportProgress()
+    }
+
+    /// Автоигра: подержать итоги и идти дальше (кроме съёмки экранов итогов и конца партии).
+    private func advanceAutoplayIfNeeded() async {
+        guard autoplay, options.screen != .summary, options.screen != .gameover else { return }
+        // Обычный сон, не «видимый»: итоги не должны залипнуть, если экран что-то накрыл.
+        try? await Task.sleep(for: .milliseconds(2500))
+        guard !Task.isCancelled, let match, isInGame else { return }
+        if match.isOver {
+            autoplayMatches += 1
+            rematch()
+        } else if match.needsNewDeal {
+            startNextDeal()
+        }
+    }
+
+    // MARK: - События сдачи
 
     private func process(_ events: [DealEvent]) {
         guard let current = match else { return }
         for event in events {
+            var urgent = false
             switch event {
             case .bid(let bid):
-                bubbles[bid.seat] = Narrator.bidText(bid)
+                bubbles[bid.seat] = phrase(for: bid)
             case .playStarted:
                 bubbles = [:]
+            case .prikupDealt:
+                sounds.play(.deal)
+            case .cardPlayed:
+                sounds.play(.card)
+            case .bella(let seat):
+                urgent = true
+                sounds.play(.bella)
+                if seat == humanSeat { sounds.haptic(.soft) }
             case .trickCompleted(let trick):
                 displayedTrick = trick
+                if trick.winner == humanSeat && !autoplay { sounds.haptic(.soft) }
             case .allPassed, .fourSevens:
                 bubbles = [:]
+            case .dealFinished:
+                dealEndedLive = true
+                autoplayDeals += 1
+                // Сразу, а не только при показе итогов: из-за выхода в меню до итогов партия
+                // иначе могла не попасть в статистику (повторная запись PlayerStats не засчитает).
+                if current.isOver { recordStatsIfNeeded() }
             default:
                 break
             }
-            if let text = Narrator.message(for: event, names: current.names, humanSeat: humanSeat, rules: current.rules) {
-                showBanner(text)
+            // `current` — партия уже после хода: при пересдаче сообщение предупредит о сдаче на обязах.
+            if let text = Narrator.message(for: event, in: current, humanSeat: humanSeat) {
+                showBanner(text, urgent: urgent)
             }
         }
     }
 
+    /// Реплика при торговле: у соперника — в его характере. Меняется от сдачи к сдаче,
+    /// а в пределах сдачи одна и та же (после «Продолжить» и отмены хода реплики те же).
+    private func phrase(for bid: Bid) -> String {
+        if let persona = persona(for: bid.seat) {
+            return persona.phrase(for: bid, variant: match?.dealCount ?? 0)
+        }
+        return Narrator.bidText(bid)
+    }
+
+    private func presentHint(_ action: Action) {
+        withAnimation(animation(.easeOut(duration: 0.2))) {
+            hintAction = action
+            if case .play(let card) = action { selectedCard = card }
+        }
+        showBanner(GameFlow.hintText(action, deal: match?.deal), urgent: true)
+        sounds.haptic(.select)
+    }
+
+    private func rejectCard(_ card: Card, in deal: Deal) {
+        let reason = Narrator.illegalCardReason(deal: deal, seat: humanSeat, card: card)
+        showBanner(reason.isEmpty ? "Так сейчас нельзя" : reason, urgent: true)
+        sounds.play(.error)
+        sounds.haptic(.warning)
+    }
+
+    // MARK: - Пауза
+
+    private func pauseDidChange() {
+        if isPaused { pauseEpoch &+= 1 }
+        updateIdleTimer()
+    }
+
+    /// Ждёт, пока игра на паузе. false — задачу отменили.
+    private func waitWhilePaused() async -> Bool {
+        while isPaused {
+            try? await Task.sleep(for: .milliseconds(150))
+            if Task.isCancelled { return false }
+        }
+        return !Task.isCancelled
+    }
+
+    /// Пауза «на виду»: если за это время игру ставили на паузу (лист, звонок, фон),
+    /// после возврата выдерживается заново целиком — взятку и сообщение успеют увидеть.
+    private func visibleSleep(_ duration: Duration) async -> Bool {
+        while true {
+            guard await waitWhilePaused() else { return false }
+            let epoch = pauseEpoch
+            try? await Task.sleep(for: duration)
+            if Task.isCancelled { return false }
+            if !isPaused && pauseEpoch == epoch { return true }
+        }
+    }
+
+    // MARK: - Очередь сообщений
+
+    private func pumpBanners() {
+        bannerGeneration &+= 1
+        let generation = bannerGeneration
+        bannerTask?.cancel()
+        bannerTask = Task { [weak self] in
+            await self?.runBanners(generation)
+        }
+    }
+
+    private func runBanners(_ generation: Int) async {
+        while !Task.isCancelled && generation == bannerGeneration {
+            guard await waitWhilePaused(), generation == bannerGeneration else { return }
+            guard let item = bannerQueue.pop() else {
+                withAnimation(.easeInOut(duration: 0.25)) { banner = nil }
+                bannerIsUrgent = false
+                bannerTask = nil
+                return
+            }
+            let hold = bannerQueue.hold(for: item, base: settings.speed.bannerTime)
+            withAnimation(.easeInOut(duration: 0.25)) { banner = item.text }
+            bannerIsUrgent = item.urgent
+            bannerShownAt = Date()
+            if UIAccessibility.isVoiceOverRunning {
+                UIAccessibility.post(notification: .announcement, argument: item.text)
+            }
+            guard await visibleSleep(hold), generation == bannerGeneration else { return }
+        }
+    }
+
+    private func clearBanners() {
+        bannerGeneration &+= 1
+        bannerTask?.cancel()
+        bannerTask = nil
+        bannerQueue.removeAll()
+        banner = nil
+        bannerIsUrgent = false
+    }
+
+    // MARK: - Внутреннее
+
+    private func chosenOpponents(count: Int) -> [Persona] {
+        GameFlow.opponents(ids: settings.opponentIDs, count: count, fallback: settings.difficulty)
+    }
+
+    /// Новая партия без раздачи.
+    private func setUpNewMatch(playerCount: Int, rules: RuleSet, opponents chosen: [Persona]) {
+        driver?.cancel()
+        cancelHint()
+        opponents = chosen
+        let names = [GameFlow.humanName(settings.playerName)] + chosen.map(\.name)
+        match = Match(playerCount: playerCount, names: names, rules: rules, seed: rng.next())
+        gameID = UUID()
+        startedAt = Date()
+        hintsUsed = 0
+        undosUsed = 0
+        hintCache = nil
+        undoStack.removeAll()
+        resetTransient()
+        clearBanners()
+        showDealSummary = false
+        loadProblem = nil
+    }
+
     private func resetTransient() {
+        dealEndedLive = false
+        lastStepWasBot = false
         bubbles = [:]
         displayedTrick = nil
         thinkingSeat = nil
         selectedCard = nil
-        bidHint = nil
+        hintAction = nil
+        cancelHint()
+    }
+
+    private func cancelHint() {
+        hintToken &+= 1
+        hintTask?.cancel()
+        hintTask = nil
+        isHinting = false
+    }
+
+    private func inGameDidChange() {
+        if !isInGame {
+            driver?.cancel()
+            driver = nil
+            cancelHint()
+            thinkingSeat = nil
+            showDealSummary = false
+            displayedTrick = nil
+            selectedCard = nil
+            hintAction = nil
+            clearBanners()
+            // Экран, который поставил паузу, уже закрыт.
+            isOverlayPresented = false
+        }
+        persist()
+        updateIdleTimer()
+    }
+
+    private func settingsDidChange(from old: AppSettings) {
+        guard !normalizingSettings else { return }
+        normalizingSettings = true
+        let fixed = settings.normalized(from: old)
+        if fixed != settings { settings = fixed }
+        normalizingSettings = false
+
+        sounds.soundEnabled = settings.soundEnabled && !autoplay
+        sounds.hapticsEnabled = settings.hapticsEnabled && !autoplay
+        if settings.soundEnabled && !old.soundEnabled { sounds.play(.card) }
+        if settings.hapticsEnabled && !old.hapticsEnabled { sounds.haptic(.tap) }
+        if settings != old { storage.saveSettings(settings) }
+    }
+
+    private func restoreSavedGame() {
+        switch storage.loadGame() {
+        case .none:
+            break
+        case .loaded(let game):
+            markReturningPlayer()
+            adopt(game)
+            if game.inGame { continueGame() }
+        case .legacy(let old):
+            markReturningPlayer()
+            adopt(SavedGame.migrating(old, settings: settings))
+            persist()
+        case .unreadable:
+            markReturningPlayer()
+            loadProblem = "Сохранённую партию открыть не удалось. Копия файла осталась на устройстве — начните новую партию."
+        }
+    }
+
+    /// Партия уже была, значит приложение открывали раньше: приветствие не показывать
+    /// (старые сборки не сохраняли неизменённые настройки, и его флаг мог потеряться).
+    private func markReturningPlayer() {
+        if !settings.hasSeenOnboarding { settings.hasSeenOnboarding = true }
+    }
+
+    private func adopt(_ game: SavedGame) {
+        var restored = game.match
+        let chosen = GameFlow.opponents(ids: game.opponentIDs, count: restored.playerCount - 1,
+                                        fallback: settings.difficulty)
+        GameFlow.syncNames(&restored, opponents: chosen)
+        opponents = chosen
+        match = restored
+        gameID = game.id
+        startedAt = game.startedAt
+        hintsUsed = game.hintsUsed
+        undosUsed = game.undosUsed
+        if restored.isOver { recordStatsIfNeeded() }
     }
 
     private func persist() {
-        Storage.saveMatch(match)
+        guard let match else { return }
+        var game = SavedGame(match: match, opponentIDs: opponents.map(\.id))
+        game.id = gameID
+        game.startedAt = startedAt
+        game.hintsUsed = hintsUsed
+        game.undosUsed = undosUsed
+        game.inGame = isInGame
+        storage.saveGame(game)
     }
 
-    private func illegalReason(_ deal: Deal) -> String {
-        guard let led = deal.currentTrick.ledSuit, let trump = deal.trump else { return "Так сейчас нельзя" }
-        if deal.hands[humanSeat].contains(where: { $0.suit == led }) {
-            return "Нужно ходить в масть \(led.symbol)"
+    /// Записать доигранную партию в статистику — один раз (повтор PlayerStats не засчитает).
+    private func recordStatsIfNeeded() {
+        guard let match, match.isOver else { return }
+        var updated = stats
+        updated.record(match: match, humanSeat: humanSeat, personaIDs: opponents.map(\.id),
+                       levelKey: GameFlow.levelKey(for: opponents))
+        if updated != stats {
+            stats = updated
+            storage.saveStats(updated)
         }
-        return "Нужно бить козырем \(trump.symbol)"
     }
 
-    // MARK: - Сообщения
+    // MARK: - Экран не гаснет
 
-    func showBanner(_ text: String) {
-        bannerQueue.append(text)
-        if bannerTask == nil { pumpBanners() }
+    private func noteActivity() {
+        lastActivity = Date()
+        updateIdleTimer()
     }
 
-    private func pumpBanners() {
-        bannerTask = Task { [weak self] in
-            while true {
-                guard let self else { return }
-                if self.bannerQueue.isEmpty {
-                    withAnimation(.easeInOut(duration: 0.25)) { self.banner = nil }
-                    self.bannerTask = nil
-                    return
-                }
-                let next = self.bannerQueue.removeFirst()
-                withAnimation(.easeInOut(duration: 0.25)) { self.banner = next }
-                try? await Task.sleep(for: self.settings.speed.bannerTime)
-            }
+    private func updateIdleTimer() {
+        let idleFor = Date().timeIntervalSince(lastActivity)
+        let keepAwake = IdlePolicy.keepAwake(inGame: isInGame, sceneActive: isSceneActive,
+                                             matchOver: match?.isOver ?? true, showingSummary: showDealSummary,
+                                             idleFor: idleFor, autoplay: autoplay)
+        if UIApplication.shared.isIdleTimerDisabled != keepAwake {
+            UIApplication.shared.isIdleTimerDisabled = keepAwake
+        }
+        idleTask?.cancel()
+        idleTask = nil
+        guard keepAwake, !autoplay else { return }
+        let limit = IdlePolicy.idleLimit(matchOver: match?.isOver ?? true, showingSummary: showDealSummary)
+        let remaining = max(1, limit - idleFor)
+        idleTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled else { return }
+            self?.updateIdleTimer()
+        }
+    }
+
+    private func animation(_ base: Animation) -> Animation {
+        UIAccessibility.isReduceMotionEnabled ? .easeInOut(duration: 0.2) : base
+    }
+
+    // MARK: - Демо-режим (CI, скриншоты)
+
+    private enum DemoGoal {
+        /// Итог первой сыгранной сдачи.
+        case summary
+        /// Конец партии.
+        case gameover
+        /// Несколько сдач в записи, на столе — новая сдача.
+        case scoresheet
+        /// Идущая партия в меню («Продолжить»).
+        case menu
+    }
+
+    private func startDemo() {
+        if autoplay {
+            let level = options.level ?? settings.difficulty
+            Diagnostics.trace("start players=\(settings.playerCount) level=\(level.rawValue) seed=\(launchSeed) screen=\(options.screenName ?? "-")")
+        }
+        switch options.screen {
+        case .none, .table?:
+            newGame()
+        case .summary?:
+            runDemo(.summary)
+        case .gameover?:
+            runDemo(.gameover)
+        case .scoresheet?:
+            runDemo(.scoresheet)
+        case .stats?:
+            runDemoStats()
+            runDemo(.menu)
+        case .menu?, .settings?, .rules?, .onboarding?:
+            runDemo(.menu)
+        }
+    }
+
+    private func runDemo(_ goal: DemoGoal) {
+        setUpNewMatch(playerCount: settings.playerCount, rules: settings.rules,
+                      opponents: chosenOpponents(count: settings.playerCount - 1))
+        guard let start = match else { return }
+        let seed = rng.next()
+        let stop: (Match) -> Bool
+        switch goal {
+        case .summary:
+            stop = { DemoSimulator.dealJustScored($0) }
+        case .gameover:
+            stop = { _ in false }
+        case .scoresheet:
+            stop = { $0.needsNewDeal && $0.history.filter { $0.outcome != .allPassed }.count >= 4 }
+        case .menu:
+            stop = { $0.needsNewDeal && $0.history.filter { $0.outcome != .allPassed }.count >= 3 }
+        }
+        // Компьютеры-«новички» играют мгновенно: вся партия — доли секунды, поэтому прямо здесь,
+        // чтобы экраны сразу увидели нужное состояние.
+        finishDemo(goal, DemoSimulator.play(start, level: .novice, seed: seed, stop: stop))
+    }
+
+    private func finishDemo(_ goal: DemoGoal, _ played: Match) {
+        var result = played
+        autoplayDeals += result.history.count
+        if goal == .scoresheet || goal == .menu, result.needsNewDeal {
+            result.startNextDeal()
+        }
+        match = result
+        switch goal {
+        case .summary, .gameover:
+            isInGame = true
+            drive()
+        case .scoresheet:
+            continueGame()
+        case .menu:
+            persist()
+        }
+        reportProgress()
+    }
+
+    /// Статистика для экрана «Статистика»: несколько быстрых партий компьютеров.
+    private func runDemoStats() {
+        var demo = PlayerStats()
+        var seeds = SplitMix64(seed: rng.next())
+        let count = settings.playerCount
+        let cast = Persona.all
+        for game in 0..<6 {
+            let rivals = (0..<(count - 1)).map { cast[(game * (count - 1) + $0) % cast.count] }
+            let start = Match(playerCount: count, names: [GameFlow.humanName(settings.playerName)] + rivals.map(\.name),
+                              rules: settings.rules, seed: seeds.next())
+            let done = DemoSimulator.play(start, level: .novice, seed: seeds.next()) { _ in false }
+            demo.record(match: done, humanSeat: humanSeat, personaIDs: rivals.map(\.id),
+                        levelKey: GameFlow.levelKey(for: rivals))
+        }
+        stats = demo
+        storage.saveStats(demo)
+    }
+
+    private func reportProgress(phase: String? = nil) {
+        guard options.isDemo else { return }
+        let name = phase ?? GameFlow.phaseName(match: match, showingSummary: showDealSummary, inGame: isInGame)
+        storage.writeProgress(deals: autoplayDeals, matches: autoplayMatches, phase: name)
+    }
+
+    private func traceDeal(_ match: Match) {
+        guard let last = match.history.last else { return }
+        let totals = match.totals.map(String.init).joined(separator: ":")
+        Diagnostics.trace("deal=\(match.history.count) outcome=\(last.outcome.rawValue) totals=\(totals)")
+        if match.isOver, let winner = match.winner {
+            Diagnostics.trace("match-over winner=\(displayName(for: winner)) totals=\(totals)")
         }
     }
 }

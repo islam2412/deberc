@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Частичный Info.plist приложения «Деберц».
+  Остальные ключи Xcode генерирует сам из настроек проекта (GENERATE_INFOPLIST_FILE = YES,
+  INFOPLIST_KEY_… в project.pbxproj) и сливает с этим файлом. Не повторяйте здесь те ключи.
+  UILaunchScreen → UIColorName: экран запуска цвета сукна (Assets.xcassets/LaunchBackground)
+  вместо чёрной вспышки.
+  Файл лежит вне папки Deberc/: всё, что внутри неё, Xcode кладёт в ресурсы,
+  и второй Info.plist сломал бы сборку («Multiple commands produce Info.plist»).
+-->
+<plist version="1.0">
+<dict>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+	</dict>
+</dict>
+</plist>
