@@ -34,16 +34,23 @@ jobs:
       - name: Версия Xcode
         run: xcodebuild -version
 
-      - name: Сборка для устройства (Release, без подписи)
+      # То же, что делает workflow TestFlight, только без подписи и загрузки.
+      - name: Архив для устройства (Release, без подписи)
         run: |
           set -o pipefail
           mkdir -p build
           xcodebuild -project Deberc.xcodeproj -scheme Deberc -configuration Release \
             -destination 'generic/platform=iOS' \
+            -archivePath build/Deberc.xcarchive \
             -derivedDataPath build/DerivedData-device \
             CODE_SIGNING_ALLOWED=NO \
-            build 2>&1 | tee build/device.log | grep -E "error:|warning:|BUILD (SUCCEEDED|FAILED)" || true
-          grep -q "BUILD SUCCEEDED" build/device.log
+            archive 2>&1 | tee build/device.log | grep -E "error:|warning:|ARCHIVE (SUCCEEDED|FAILED)" || true
+          grep -q "ARCHIVE SUCCEEDED" build/device.log
+          APP=build/Deberc.xcarchive/Products/Applications/Deberc.app
+          echo "Info.plist сборки:"
+          plutil -p "$APP/Info.plist" | grep -E "CFBundle(DisplayName|Identifier|ShortVersionString|Version)|ITSAppUses|UISupported|MinimumOS" || true
+          test -f "$APP/PrivacyInfo.xcprivacy" && echo "PrivacyInfo.xcprivacy: есть"
+          test -f "$APP/Assets.car" && echo "Assets.car: есть"
 
       - name: Сборка для симулятора
         run: |

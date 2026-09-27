@@ -28,85 +28,12 @@ struct MenuView: View {
     var body: some View {
         ZStack {
             FeltBackground()
-            ScrollView {
-                VStack(spacing: 22) {
-                    title
-                        .padding(.top, 40)
-
-                    VStack(spacing: 14) {
-                        if store.canContinue {
-                            Button {
-                                store.continueGame()
-                            } label: {
-                                Label("Продолжить партию", systemImage: "play.fill")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(TableButtonStyle(prominent: true))
-                        }
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Игроков")
-                                .font(.subheadline)
-                                .foregroundStyle(.white.opacity(0.8))
-                            Picker("Игроков", selection: $store.settings.playerCount) {
-                                Text("Вдвоём").tag(2)
-                                Text("Втроём").tag(3)
-                            }
-                            .pickerStyle(.segmented)
-
-                            Text("Сложность")
-                                .font(.subheadline)
-                                .foregroundStyle(.white.opacity(0.8))
-                                .padding(.top, 6)
-                            Picker("Сложность", selection: $store.settings.botLevel) {
-                                ForEach(BotLevel.allCases, id: \.self) { level in
-                                    Text(level.title).tag(level)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                        }
-                        .padding(14)
-                        .background(RoundedRectangle(cornerRadius: 16).fill(Color.black.opacity(0.22)))
-
-                        Button {
-                            if store.canContinue {
-                                confirmNewGame = true
-                            } else {
-                                store.newGame()
-                            }
-                        } label: {
-                            Label("Новая партия", systemImage: "suit.spade.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(TableButtonStyle(prominent: !store.canContinue))
-
-                        HStack(spacing: 12) {
-                            Button {
-                                showRules = true
-                            } label: {
-                                Label("Правила", systemImage: "book")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(TableButtonStyle())
-
-                            Button {
-                                showSettings = true
-                            } label: {
-                                Label("Настройки", systemImage: "gearshape")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(TableButtonStyle())
-                        }
-                    }
-                    .frame(maxWidth: 440)
-                    .padding(.horizontal, 24)
-
-                    Text("Партия до \(Narrator.pointsGenitive(store.settings.rules.targetScore))")
-                        .font(.footnote)
-                        .foregroundStyle(.white.opacity(0.7))
-                        .padding(.bottom, 30)
+            GeometryReader { geo in
+                ScrollView {
+                    menuContent
+                        .frame(maxWidth: .infinity)
+                        .frame(minHeight: geo.size.height)
                 }
-                .frame(maxWidth: .infinity)
             }
         }
         .sheet(isPresented: $showRules) {
@@ -121,6 +48,86 @@ struct MenuView: View {
             Button("Отмена", role: .cancel) {}
         } message: {
             Text("Текущая партия будет потеряна.")
+        }
+    }
+
+    private var menuContent: some View {
+        VStack(spacing: 22) {
+            Spacer(minLength: 24)
+            title
+
+            VStack(spacing: 14) {
+                if store.canContinue {
+                    Button {
+                        store.continueGame()
+                    } label: {
+                        Label("Продолжить партию", systemImage: "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(TableButtonStyle(prominent: true))
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Игроков")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.8))
+                    Picker("Игроков", selection: $store.settings.playerCount) {
+                        Text("Вдвоём").tag(2)
+                        Text("Втроём").tag(3)
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text("Сложность")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .padding(.top, 6)
+                    Picker("Сложность", selection: $store.settings.botLevel) {
+                        ForEach(BotLevel.allCases, id: \.self) { level in
+                            Text(level.title).tag(level)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 16).fill(Color.black.opacity(0.22)))
+
+                Button {
+                    if store.canContinue {
+                        confirmNewGame = true
+                    } else {
+                        store.newGame()
+                    }
+                } label: {
+                    Label("Новая партия", systemImage: "suit.spade.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(TableButtonStyle(prominent: !store.canContinue))
+
+                HStack(spacing: 12) {
+                    Button {
+                        showRules = true
+                    } label: {
+                        Label("Правила", systemImage: "book")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(TableButtonStyle())
+
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Label("Настройки", systemImage: "gearshape")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(TableButtonStyle())
+                }
+            }
+            .frame(maxWidth: 440)
+            .padding(.horizontal, 24)
+
+            Text("Партия до \(Narrator.pointsGenitive(store.settings.rules.targetScore))")
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.7))
+            Spacer(minLength: 24)
         }
     }
 

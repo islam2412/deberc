@@ -96,7 +96,7 @@ final class GameStore: ObservableObject {
             startNextDeal()
             return
         }
-        if match.needsNewDeal || match.isOver {
+        if match.isOver || (match.needsNewDeal && match.history.last?.outcome != .allPassed) {
             showDealSummary = true
         }
         drive()
@@ -201,6 +201,13 @@ final class GameStore: ObservableObject {
             guard let snapshot = match else { return }
             if snapshot.isOver || snapshot.needsNewDeal {
                 thinkingSeat = nil
+                // «Все пас» — просто пересдаём, без окна итогов.
+                if !snapshot.isOver, snapshot.history.last?.outcome == .allPassed {
+                    try? await Task.sleep(for: settings.speed.bannerTime)
+                    if Task.isCancelled { return }
+                    startNextDeal()
+                    return
+                }
                 try? await Task.sleep(for: .milliseconds(400))
                 if Task.isCancelled { return }
                 withAnimation(.easeInOut(duration: 0.3)) { showDealSummary = true }

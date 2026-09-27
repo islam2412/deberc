@@ -40,7 +40,10 @@ xcrun simctl bootstatus "$UDID" -b
 xcrun simctl install "$UDID" "$APP"
 
 is_running() {
-  xcrun simctl spawn "$UDID" launchctl list | grep -q "UIKitApplication:$BUNDLE_ID"
+  # Сначала читаем весь список: `grep -q` в конвейере с pipefail даёт ложный SIGPIPE.
+  local list
+  list=$(xcrun simctl spawn "$UDID" launchctl list)
+  [[ "$list" == *"UIKitApplication:$BUNDLE_ID"* ]]
 }
 
 # 1. Главное меню.
