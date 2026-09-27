@@ -17,10 +17,10 @@ struct ScoreChip: View {
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                 if isDealer {
-                    Text("сдаёт")
+                    Image(systemName: "rectangle.stack.fill")
                         .font(.caption2)
-                        .padding(.horizontal, 4)
-                        .background(Capsule().fill(Color.white.opacity(0.2)))
+                        .foregroundStyle(Theme.gold)
+                        .accessibilityLabel("сдаёт")
                 }
             }
             HStack(spacing: 4) {
@@ -173,10 +173,11 @@ struct TrickView: View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
+            let size = min(cardWidth, h * 0.42)
             ZStack {
                 ForEach(plays, id: \.card) { play in
                     let position = relativePosition(play.seat)
-                    CardView(card: play.card, width: cardWidth, highlighted: winner == play.seat)
+                    CardView(card: play.card, width: size, highlighted: winner == play.seat)
                         .rotationEffect(.degrees(position.angle))
                         .offset(x: position.x * w, y: position.y * h)
                         .transition(.asymmetric(

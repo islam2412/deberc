@@ -5,6 +5,7 @@ import DebercKit
 /// Игровой стол.
 struct GameView: View {
     @EnvironmentObject private var store: GameStore
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showScoreSheet = false
     @State private var showRules = false
     @State private var confirmLeave = false
@@ -12,6 +13,7 @@ struct GameView: View {
     var body: some View {
         GeometryReader { geo in
             let cardWidth = handCardWidth(geo.size)
+            let isLarge = isLargeScreen(geo.size)
             ZStack {
                 FeltBackground()
                 if let match = store.match, let deal = match.deal {
@@ -24,7 +26,7 @@ struct GameView: View {
                     if let banner = store.banner {
                         BannerView(text: banner)
                             .id(banner)
-                            .padding(.top, 64)
+                            .padding(.top, geo.size.height * 0.2)
                     }
                     Spacer()
                 }
@@ -35,11 +37,13 @@ struct GameView: View {
                     Color.black.opacity(0.45)
                         .ignoresSafeArea()
                         .transition(.opacity)
-                    DealSummaryView(match: match, maxHeight: geo.size.height - 40)
+                    DealSummaryView(match: match, maxHeight: geo.size.height - 40, maxWidth: isLarge ? 720 : 560)
                         .transition(.scale(scale: 0.9).combined(with: .opacity))
                 }
             }
             .animation(.easeInOut(duration: 0.25), value: store.showDealSummary)
+            // На iPad текст крупнее; на iPhone ограничиваем, чтобы не ломалась раскладка стола.
+            .dynamicTypeSize(isLarge ? max(dynamicTypeSize, .xxxLarge) : min(dynamicTypeSize, .xxLarge))
         }
         .sheet(isPresented: $showScoreSheet) {
             if let match = store.match {
@@ -57,11 +61,16 @@ struct GameView: View {
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
 
+    private func isLargeScreen(_ size: CGSize) -> Bool {
+        min(size.width, size.height) >= 600
+    }
+
     /// Ширина карты на руке — под размер экрана.
     private func handCardWidth(_ size: CGSize) -> CGFloat {
-        let byWidth = (size.width - 24) / 6.0
-        let byHeight = size.height / 6.4
-        return max(44, min(120, min(byWidth, byHeight)))
+        let byWidth = (size.width - 24) / 4.6
+        let byHeight = size.height / 5.6
+        let limit: CGFloat = isLargeScreen(size) ? 170 : 110
+        return max(44, min(limit, min(byWidth, byHeight)))
     }
 
     private func table(match: Match, deal: Deal, size: CGSize, cardWidth: CGFloat) -> some View {

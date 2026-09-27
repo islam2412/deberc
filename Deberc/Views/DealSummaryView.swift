@@ -7,6 +7,7 @@ struct DealSummaryView: View {
     let match: Match
     /// Сколько места по высоте есть на экране.
     let maxHeight: CGFloat
+    var maxWidth: CGFloat = 560
 
     var body: some View {
         ScrollView {
@@ -31,7 +32,7 @@ struct DealSummaryView: View {
             .padding(20)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .frame(maxWidth: 560, maxHeight: max(240, maxHeight))
+        .frame(maxWidth: maxWidth, maxHeight: max(240, maxHeight))
         .fixedSize(horizontal: false, vertical: true)
         .background(
             RoundedRectangle(cornerRadius: 22, style: .continuous)

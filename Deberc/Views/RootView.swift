@@ -21,6 +21,7 @@ struct RootView: View {
 /// Главное меню.
 struct MenuView: View {
     @EnvironmentObject private var store: GameStore
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showRules = false
     @State private var showSettings = false
     @State private var confirmNewGame = false
@@ -29,11 +30,13 @@ struct MenuView: View {
         ZStack {
             FeltBackground()
             GeometryReader { geo in
+                let isLarge = min(geo.size.width, geo.size.height) >= 600
                 ScrollView {
-                    menuContent
+                    menuContent(isLarge: isLarge)
                         .frame(maxWidth: .infinity)
                         .frame(minHeight: geo.size.height)
                 }
+                .dynamicTypeSize(isLarge ? max(dynamicTypeSize, .xxxLarge) : dynamicTypeSize)
             }
         }
         .sheet(isPresented: $showRules) {
@@ -51,10 +54,10 @@ struct MenuView: View {
         }
     }
 
-    private var menuContent: some View {
+    private func menuContent(isLarge: Bool) -> some View {
         VStack(spacing: 22) {
             Spacer(minLength: 24)
-            title
+            title(isLarge: isLarge)
 
             VStack(spacing: 14) {
                 if store.canContinue {
@@ -121,7 +124,7 @@ struct MenuView: View {
                     .buttonStyle(TableButtonStyle())
                 }
             }
-            .frame(maxWidth: 440)
+            .frame(maxWidth: isLarge ? 600 : 440)
             .padding(.horizontal, 24)
 
             Text("Партия до \(Narrator.pointsGenitive(store.settings.rules.targetScore))")
@@ -131,7 +134,7 @@ struct MenuView: View {
         }
     }
 
-    private var title: some View {
+    private func title(isLarge: Bool) -> some View {
         VStack(spacing: 6) {
             HStack(spacing: 10) {
                 Text("♠\u{FE0E}").foregroundStyle(.white)
@@ -139,9 +142,9 @@ struct MenuView: View {
                 Text("♣\u{FE0E}").foregroundStyle(.white)
                 Text("♦\u{FE0E}").foregroundStyle(Color(red: 1.0, green: 0.42, blue: 0.42))
             }
-            .font(.system(size: 34))
+            .font(.system(size: isLarge ? 48 : 34))
             Text("Деберц")
-                .font(.system(size: 56, weight: .bold, design: .serif))
+                .font(.system(size: isLarge ? 84 : 56, weight: .bold, design: .serif))
                 .foregroundStyle(.white)
                 .shadow(color: .black.opacity(0.4), radius: 4, x: 0, y: 2)
             Text("по нашим правилам")
