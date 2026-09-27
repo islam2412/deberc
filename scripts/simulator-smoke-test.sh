@@ -87,6 +87,9 @@ PROGRESS=""
 MARKER=""
 RESULTS_FILE=""
 CURRENT=""
+# 1 — все сценарии пройдены. bash 3.2 при ошибке раскрытия (set -u) выходит из скрипта
+# с кодом 0 — без этого флага оборванная проверка выглядела бы успешной.
+FINISHED=0
 
 record() { # record <сценарий> <итог> <подробности>
   printf '| %s | %s | %s |\n' "$1" "$2" "$3" >>"$RESULTS_FILE"
@@ -102,7 +105,7 @@ launch() { # launch <метка> [аргументы…]
     die "Не удалось запустить приложение ($KIND, $tag)"
   PID=${out##*: }
   case "$PID" in
-    '' | *[!0-9]*) die "Не понял PID из «$out» ($KIND, $tag)" ;;
+    '' | *[!0-9]*) die "Не понял PID из «${out}» ($KIND, $tag)" ;;
   esac
   log "Запущено ($tag): PID $PID"
 }
@@ -243,12 +246,12 @@ scenario_until() { # scenario_until <экран> <образец фазы> <пр
   alive_or_die "экран $screen"
   shot "screen-$screen"
   if [ $reached = 1 ]; then
-    record "экран $screen" "OK" "фаза «$phase», $((SECONDS - start)) с"
+    record "экран $screen" "OK" "фаза «${phase}», $((SECONDS - start)) с"
   elif [ "${STRICT_SCREENS:-0}" = 1 ]; then
-    die "Не дождался экрана $screen за $timeout с (фаза: «$phase»)"
+    die "Не дождался экрана $screen за $timeout с (фаза: «${phase}»)"
   else
-    echo "::warning::Не дождался экрана $screen за $timeout с (фаза: «$phase»), снят тот кадр, что есть"
-    record "экран $screen" "не дождался" "фаза «$phase» через $timeout с"
+    echo "::warning::Не дождался экрана $screen за $timeout с (фаза: «${phase}»), снят тот кадр, что есть"
+    record "экран $screen" "не дождался" "фаза «${phase}» через $timeout с"
   fi
   stop_app
 }
@@ -298,6 +301,11 @@ write_summary() {
 on_exit() {
   local rc=$?
   set +e
+  if [ $rc -eq 0 ] && [ "$FINISHED" != 1 ]; then
+    rc=1
+    LAST_ERROR="Скрипт оборвался до конца сценариев${CURRENT:+ (на «${CURRENT}»)}, см. лог шага"
+    echo "::error::$LAST_ERROR" >&2
+  fi
   if [ $rc -ne 0 ]; then
     record "${CURRENT:-подготовка}" "ОШИБКА" "${LAST_ERROR:-см. лог шага}"
     [ -n "$PID" ] && is_running && shot "failure"
@@ -380,6 +388,7 @@ cmd_run() {
   if [ -n "$crashes" ]; then
     die "Найдены отчёты о сбоях: $(echo "$crashes" | xargs -n1 basename | tr '\n' ' ')"
   fi
+  FINISHED=1
   log "Готово: результаты в $OUT"
 }
 
