@@ -1,0 +1,16 @@
+// Настройки подписи и версии приложения «Деберц».
+// Меняйте их здесь — Xcode подхватит автоматически.
+
+// Team ID из developer.apple.com → Account → Membership details (10 символов, например A1B2C3D4E5).
+// Можно оставить пустым и выбрать команду в Xcode: Signing & Capabilities → Team.
+DEVELOPMENT_TEAM =
+
+// Уникальный идентификатор приложения. Должен совпадать с Bundle ID в App Store Connect.
+PRODUCT_BUNDLE_IDENTIFIER = com.islam2412.deberc
+
+// Версия для пользователей: 1.0, 1.1, …
+MARKETING_VERSION = 1.0
+
+// Номер сборки. Для каждой загрузки в TestFlight он должен быть больше предыдущего.
+// В GitHub Actions подставляется автоматически.
+CURRENT_PROJECT_VERSION = 1

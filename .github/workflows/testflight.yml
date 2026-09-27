@@ -1,0 +1,127 @@
+name: TestFlight
+
+# Сборка и загрузка в App Store Connect → TestFlight.
+# Запуск вручную: Actions → TestFlight → Run workflow. Или пушем тега вида v1.0.
+# Что нужно заранее — см. docs/TESTFLIGHT.md.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: testflight
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    name: Сборка и загрузка в TestFlight
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      # Необязательно: свой Bundle ID (Settings → Secrets and variables → Actions → Variables).
+      BUNDLE_ID: ${{ vars.BUNDLE_ID }}
+      # Номер сборки растёт с каждым запуском. Смещение +100 — чтобы не пересечься
+      # с номерами, загруженными вручную из Xcode.
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверка секретов
+        run: |
+          missing=0
+          for name in APPLE_TEAM_ID ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Не задан секрет $name — см. docs/TESTFLIGHT.md, шаг «Секреты GitHub»"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Версия Xcode
+        run: xcodebuild -version
+
+      - name: Тесты движка
+        working-directory: DebercKit
+        run: swift test
+
+      - name: Ключ App Store Connect API
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          KEY_PATH="$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$KEY_PATH"
+          echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+          echo "BUILD=$((BUILD_NUMBER + 100))" >> "$GITHUB_ENV"
+
+      - name: Архив (Release)
+        run: |
+          set -o pipefail
+          EXTRA=()
+          if [ -n "$BUNDLE_ID" ]; then EXTRA+=("PRODUCT_BUNDLE_IDENTIFIER=$BUNDLE_ID"); fi
+          xcodebuild -project Deberc.xcodeproj -scheme Deberc -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Deberc.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION="$BUILD" \
+            "${EXTRA[@]}" \
+            archive 2>&1 | tee build-archive.log | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)" || true
+          grep -q "ARCHIVE SUCCEEDED" build-archive.log
+
+      - name: Загрузка в App Store Connect
+        run: |
+          set -o pipefail
+          cat > ExportOptions.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>destination</key>
+            <string>upload</string>
+            <key>teamID</key>
+            <string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>uploadSymbols</key>
+            <true/>
+            <key>manageAppVersionAndBuildNumber</key>
+            <false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath build/Deberc.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            2>&1 | tee build-export.log | grep -E "error|Upload|EXPORT (SUCCEEDED|FAILED)" || true
+          grep -q "EXPORT SUCCEEDED" build-export.log
+
+      - name: Итог
+        run: |
+          echo "### Сборка $BUILD загружена в App Store Connect" >> "$GITHUB_STEP_SUMMARY"
+          echo "Через 10–30 минут она появится в TestFlight (App Store Connect → Приложения → Деберц → TestFlight)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Логи
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflight-logs
+          path: |
+            build-archive.log
+            build-export.log
+          if-no-files-found: ignore

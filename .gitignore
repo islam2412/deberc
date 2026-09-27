@@ -1,0 +1,16 @@
+# macOS / Xcode
+.DS_Store
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+*.xcarchive
+ExportOptions.plist
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Ключи App Store Connect никогда не коммитим
+*.p8
