@@ -22,6 +22,7 @@ func bot(_ spec: String) -> Bot {
         case "am": c.auctionModel = v != 0
         case "bl": c.belief = v
         case "vn": c.valueNet = v != 0
+        case "vb": c.valueBid = v != 0
         case "ps": c.playSamples = Int(v)
         case "bs": c.biddingSamples = Int(v)
         case "budget": c.timeBudget = v <= 0 ? nil : v

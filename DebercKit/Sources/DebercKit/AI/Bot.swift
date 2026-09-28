@@ -80,6 +80,8 @@ public struct Bot: Sendable {
         public var belief: Double
         /// Втроём оценивать ход сетью (`ValueNet`) вместо доигрывания сдачи по простым правилам.
         public var valueNet: Bool
+        /// Втроём оценивать заявку той же сетью (с первого хода) вместо доигрывания.
+        public var valueBid: Bool
 
         public init(biddingSamples: Int, takeThreshold: Double, nameThreshold: Double,
                     feelShift: Double = 0, feelNoise: Double = 0, forcedAware: Bool, exchange: ExchangeMode,
@@ -87,7 +89,7 @@ public struct Bot: Sendable {
                     inferInBidding: Bool = false, memoryTricks: Int? = nil, slipPercent: Int = 0,
                     rolloutExact: Int = 0, tieMargin: Double = 0, timeBudget: Double? = nil,
                     exactSolver: Bool = false, playInference: Double = 0, auctionModel: Bool = false,
-                    belief: Double = 0, valueNet: Bool = false) {
+                    belief: Double = 0, valueNet: Bool = false, valueBid: Bool = false) {
             self.biddingSamples = biddingSamples
             self.takeThreshold = takeThreshold
             self.nameThreshold = nameThreshold
@@ -110,6 +112,7 @@ public struct Bot: Sendable {
             self.auctionModel = auctionModel
             self.belief = belief
             self.valueNet = valueNet
+            self.valueBid = valueBid
         }
 
         /// Настройки уровня и стиля.
@@ -449,9 +452,14 @@ public struct Bot: Sendable {
             for values in perWorld { for i in values.indices { totals[i] += values[i] } }
             return totals.map { $0 / Double(perWorld.count) }
         }
+        let net = config.valueBid && v.playerCount == 3 && ValueFeatures.supports(v.rules) ? ValueNet.shared : nil
         for world in worlds {
             for (i, trump) in trumps.enumerated() {
-                totals[i] += simulateDeal(v, hands6: world.hands, prikup: world.prikup, trump: trump, bidder: v.seat)
+                if let net {
+                    totals[i] += valuedDeal(v, hands6: world.hands, prikup: world.prikup, trump: trump, bidder: v.seat, net: net)
+                } else {
+                    totals[i] += simulateDeal(v, hands6: world.hands, prikup: world.prikup, trump: trump, bidder: v.seat)
+                }
             }
         }
         return totals.map { $0 / Double(samples) }
@@ -518,6 +526,22 @@ public struct Bot: Sendable {
         for id in ids(in: deal.hands[0] | deal.hands[1]) { remaining += ctx.points[id] }
         return Bot.solvedUtility(ctx, me: v.seat, cardPoints: zeros, tricks: zeros, remainingPoints: remaining,
                                  bonus: bonus, diff: deal.firstLead == v.seat ? value : -value)
+    }
+
+    /// Втроём: итог сдачи по сети оценки позиции — с первого хода, после прикупа и обмена семёрки.
+    private func valuedDeal(_ v: SeatView, hands6: [UInt32], prikup: [UInt32], trump: Suit, bidder: Int,
+                            net: ValueNet) -> Double {
+        let deal = dealHands(v, hands6: hands6, prikup: prikup, trump: trump, bidder: bidder)
+        let n = v.playerCount
+        let order = v.leadOrder(bidder: bidder)
+        let decl = Combinations.declarations(hands: deal.hands.map { m in ids(in: m).map { Card(id: $0) } },
+                                             trump: trump, rules: v.rules, priority: order)
+        let ctx = SimContext(rules: v.rules, playerCount: n, trump: trump.rawValue, bidder: bidder, priority: order,
+                             declarations: decl, pot: v.pot, baitCounts: v.baitCounts, nakedCounts: v.nakedCounts)
+        let zeros = [Int](repeating: 0, count: n)
+        let state = SimState(hands: deal.hands, turn: deal.firstLead, cardPoints: zeros, tricks: zeros, played: deal.seen,
+                             tricksLeft: deal.hands[0].nonzeroBitCount, ctx: ctx)
+        return net.utility(state, ctx, me: v.seat)
     }
 
     /// Разыграть сдачу с начала по эвристике; полезность для `v.seat`.
