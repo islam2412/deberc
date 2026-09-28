@@ -127,6 +127,13 @@ public struct Bot: Sendable {
                            forcedAware: true, exchange: .simulate,
                            playSamples: 160, exactTwoPlayers: 6, exactThreePlayers: 4, inferFromBidding: true,
                            timeBudget: 0.9, exactSolver: true, playInference: 0.15, auctionModel: true)
+                #if DEBUG
+                // Отладочная сборка в десятки раз медленнее: меньше миров и без чтения ходов,
+                // иначе Мастер думает над ходом десятки секунд.
+                c.playSamples = 40
+                c.biddingSamples = 32
+                c.playInference = 0
+                #endif
             }
             c.takeThreshold += style.takeShift
             c.nameThreshold += style.nameShift
@@ -200,11 +207,6 @@ public struct Bot: Sendable {
         var config = Config.preset(.master)
         // Без предела времени: сколько миров успеть, зависело бы от загрузки, и совет мог бы меняться.
         config.timeBudget = nil
-        #if DEBUG
-        // Отладочная сборка в разы медленнее: считаем меньше миров, чтобы совет не заставлял ждать.
-        config.playSamples = 40
-        config.biddingSamples = 32
-        #endif
         let bot = Bot(config: config, level: .master, style: .balanced)
         var rng = SplitMix64(seed: view.positionHash ^ 0x5EED_C0DE)
         return bot.chooseAction(view: view, rng: &rng)
@@ -713,8 +715,9 @@ public struct Bot: Sendable {
               (v.tricks + [v.currentTrick]).contains(where: { $0.plays.contains { $0.seat != v.seat } })
         else { return WorldSampler.sampleInformed(v, info: info, count: count, rng: &rng) }
         let candidates = WorldSampler.informedCandidates(v, info: info, trump: trump, count: count * 2, rng: &rng)
-        // На чтение — не больше трети предела; не успели — берём тех кандидатов, что успели оценить.
-        let logs = Bot.solveWorlds(candidates.worlds.count, minimum: count,
+        // На чтение — не больше трети предела; не успели — берём тех кандидатов, что успели оценить
+        // (но не меньше четверти от нужного числа миров — остальные повторятся при перевыборе).
+        let logs = Bot.solveWorlds(candidates.worlds.count, minimum: max(8, count / 4),
                                    budget: config.timeBudget.map { $0 / 3 }) { solver, i in
             self.playLogLikelihood(v, info: info, world: candidates.worlds[i], trump: trump, bidder: bidder,
                                    beta: beta, solver: solver)
