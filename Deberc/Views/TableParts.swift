@@ -75,7 +75,7 @@ struct SeatInfo {
 
 // MARK: - Аватар
 
-/// Круглый аватар персонажа: эмодзи на цвете персонажа. Ход — золотое кольцо, раздумье — бегущая дуга.
+/// Круглый аватар персонажа: портрет (или эмодзи) на цвете персонажа. Ход — золотое кольцо, раздумье — бегущая дуга.
 struct SeatAvatar: View {
     let persona: Persona?
     let name: String
@@ -90,10 +90,14 @@ struct SeatAvatar: View {
         ZStack {
             Circle()
                 .fill(LinearGradient(colors: [tint, tint.opacity(0.72)], startPoint: .top, endPoint: .bottom))
-            Text(symbol)
-                .font(.system(size: size * (persona == nil ? 0.44 : 0.54), weight: .bold, design: .rounded))
-                .foregroundStyle(Theme.onGold)
-                .minimumScaleFactor(0.5)
+            if let portrait = persona.flatMap(CardArt.avatarImageName) {
+                PortraitImage(name: portrait, size: size)
+            } else {
+                Text(symbol)
+                    .font(.system(size: size * (persona == nil ? 0.44 : 0.54), weight: .bold, design: .rounded))
+                    .foregroundStyle(Theme.onGold)
+                    .minimumScaleFactor(0.5)
+            }
             Circle()
                 .strokeBorder(isActive ? Theme.gold : Theme.ivory.opacity(0.75), lineWidth: isActive ? 3 : 1.5)
             if isThinking {

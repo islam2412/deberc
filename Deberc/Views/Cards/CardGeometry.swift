@@ -355,6 +355,18 @@ struct CardMetrics: Equatable {
             letterCapHeight: capHeight)
     }
 
+    /// Квадрат портрета в верхней половине картинки: справа от выреза под индекс, низом — под «перевязь»
+    /// (срез по поясу прячется под полосами).
+    var courtPortraitRect: CGRect {
+        let w = width
+        let left = blockRight + w * 0.04
+        let right = w - courtMargin
+        let top = courtMargin
+        let bottom = height / 2 - (courtBands.last?.to ?? 0) + w * 0.03
+        let side = min(right - left, bottom - top)
+        return CGRect(x: (left + right - side) / 2, y: bottom - side, width: side, height: side)
+    }
+
     /// Радиус медальона с мастью в центре картинки.
     var medallionRadius: CGFloat { width * 0.105 }
 

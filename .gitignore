@@ -17,3 +17,6 @@ Package.resolved
 
 # Рабочие каталоги Claude Code
 .claude/
+
+# Исходники иллюстраций из Higgsfield (2K PNG) — готовые лежат в Assets.xcassets/Art
+art-raw/

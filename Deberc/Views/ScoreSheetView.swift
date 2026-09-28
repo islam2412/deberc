@@ -127,9 +127,7 @@ struct ScoreSheetView: View {
             ForEach(0 ..< n, id: \.self) { seat in
                 HStack(spacing: 5) {
                     if let persona = seats.persona(seat) {
-                        Text(persona.avatar)
-                            .font(.system(size: 15))
-                            .accessibilityHidden(true)
+                        PersonaAvatarView(persona: persona, size: 20)
                     }
                     Text(seats.column(seat))
                         .lineLimit(1)

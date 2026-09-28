@@ -16,7 +16,7 @@ struct CardFaceCanvas: View, Equatable {
     }
 }
 
-/// Рубашка карты одним `Canvas`: ромбическая сетка, золотая рамка, медальон с «Д».
+/// Рубашка карты одним `Canvas`: золотой орнамент (без него — ромбическая сетка с рамкой), медальон с «Д».
 struct CardBackCanvas: View, Equatable {
     let metrics: CardMetrics
     let style: CardBackStyle
@@ -178,8 +178,9 @@ struct CardFacePainter {
 
     // MARK: Картинки
 
-    /// Картинка без портрета: рамка с вырезами под индексы, «перевязь» из полос цвета масти и золота,
-    /// в каждой половине — убор (корона, диадема, берет) и крупная буква; в центре — медальон с мастью.
+    /// Картинка: рамка с вырезами под индексы, «перевязь» из полос цвета масти и золота,
+    /// в каждой половине — портрет из ресурсов, а без него — убор (корона, диадема, берет) и крупная буква;
+    /// в центре — медальон с мастью.
     private func drawCourt(_ context: GraphicsContext) {
         let w = m.width
         let frame = m.courtFrame()
@@ -188,8 +189,9 @@ struct CardFacePainter {
 
         var clipped = context
         clipped.clip(to: framePath)
-        drawCourtHalf(clipped)
-        drawCourtHalf(rotated(clipped))
+        let portrait = CardArt.courtImageName(card)
+        drawCourtHalf(clipped, portrait: portrait)
+        drawCourtHalf(rotated(clipped), portrait: portrait)
 
         // Медальон.
         let medallion = Path(outline: Outline.circle(center: center, radius: m.medallionRadius))
@@ -203,8 +205,12 @@ struct CardFacePainter {
         context.stroke(inner, with: .color(ink.opacity(0.55)), lineWidth: max(0.4, w * 0.006))
     }
 
-    private func drawCourtHalf(_ context: GraphicsContext) {
+    /// Половина картинки: портрет (если есть) или убор с буквой; снизу — «перевязь».
+    private func drawCourtHalf(_ context: GraphicsContext, portrait: String?) {
         let w = m.width, mid = m.height / 2
+        if let portrait {
+            context.draw(Image(portrait), in: m.courtPortraitRect)
+        }
         let left = m.courtMargin - 1, right = w - m.courtMargin + 1
         for band in m.courtBands {
             let rect = CGRect(x: left, y: mid - band.to, width: right - left, height: band.to - band.from)
@@ -216,6 +222,7 @@ struct CardFacePainter {
             }
             context.fill(Path(rect), with: .color(color))
         }
+        if portrait != nil { return }
 
         let half = m.courtHalf(for: card.rank)
         let line = max(0.5, w * 0.008)
@@ -254,46 +261,59 @@ struct CardBackPainter {
         context.fill(fieldPath, with: .linearGradient(Gradient(colors: [colors.top, colors.bottom]),
                                                       startPoint: .zero, endPoint: CGPoint(x: w, y: h)))
 
-        // Ромбическая сетка.
-        var lattice = context
-        lattice.clip(to: fieldPath)
-        let step = max(w / 8, 4.5)
-        var lines = Path()
-        var k = -h
-        while k < w + h {
-            lines.move(to: CGPoint(x: k, y: 0))
-            lines.addLine(to: CGPoint(x: k + h, y: h))
-            lines.move(to: CGPoint(x: k, y: h))
-            lines.addLine(to: CGPoint(x: k + h, y: 0))
-            k += step
-        }
-        lattice.stroke(lines, with: .color(Color(red: 1, green: 0.925, blue: 0.78).opacity(0.16)),
-                       lineWidth: m.hairline)
-
-        // Золотая рамка поля.
         let gold = Theme.goldFill
-        let inset = w * 0.045
-        let frame = Path(roundedRect: field.insetBy(dx: inset, dy: inset), cornerRadius: fieldRadius * 0.6,
-                         style: .continuous)
-        context.stroke(frame, with: .color(gold.opacity(0.85)), lineWidth: max(0.6, w * 0.014))
+        let ornament = w >= 16 ? CardArt.backOrnamentName : nil
+        if let ornament {
+            // Золотой орнамент (бараньи рога, ромбы, Эльбрус) с собственной рамкой поверх цвета рубашки.
+            var art = context
+            art.clip(to: fieldPath)
+            art.draw(Image(ornament), in: field)
+        } else {
+            // Ромбическая сетка.
+            var lattice = context
+            lattice.clip(to: fieldPath)
+            let step = max(w / 8, 4.5)
+            var lines = Path()
+            var k = -h
+            while k < w + h {
+                lines.move(to: CGPoint(x: k, y: 0))
+                lines.addLine(to: CGPoint(x: k + h, y: h))
+                lines.move(to: CGPoint(x: k, y: h))
+                lines.addLine(to: CGPoint(x: k + h, y: 0))
+                k += step
+            }
+            lattice.stroke(lines, with: .color(Color(red: 1, green: 0.925, blue: 0.78).opacity(0.16)),
+                           lineWidth: m.hairline)
 
-        // Медальон с монограммой «Д».
-        let medallionSize = CGSize(width: w * 0.46, height: w * 0.58)
+            // Золотая рамка поля.
+            let inset = w * 0.045
+            let frame = Path(roundedRect: field.insetBy(dx: inset, dy: inset), cornerRadius: fieldRadius * 0.6,
+                             style: .continuous)
+            context.stroke(frame, with: .color(gold.opacity(0.85)), lineWidth: max(0.6, w * 0.014))
+        }
+
+        // Медальон с монограммой «Д». С орнаментом — внутри его овала с бисерным кольцом
+        // (овал занимает 0,28 × 0,47 ширины карты), без орнамента — крупный, с двойной золотой рамкой.
+        let medallionSize = ornament != nil ? CGSize(width: w * 0.26, height: w * 0.44)
+                                            : CGSize(width: w * 0.46, height: w * 0.58)
         let medallionRect = CGRect(x: (w - medallionSize.width) / 2, y: (h - medallionSize.height) / 2,
                                    width: medallionSize.width, height: medallionSize.height)
         let medallion = Path(ellipseIn: medallionRect)
         context.fill(medallion, with: .color(colors.bottom))
-        context.stroke(medallion, with: .color(gold), lineWidth: max(0.6, w * 0.014))
+        if ornament == nil {
+            context.stroke(medallion, with: .color(gold), lineWidth: max(0.6, w * 0.014))
+        }
         let innerRect = medallionRect.insetBy(dx: w * 0.03, dy: w * 0.03)
         context.stroke(Path(ellipseIn: innerRect), with: .color(gold.opacity(0.6)), lineWidth: max(0.4, w * 0.006))
 
         let center = CGPoint(x: w / 2, y: h / 2)
         if w >= 36 {
-            var monogram = context.resolve(Text("Д").font(.system(size: w * 0.30, weight: .bold, design: .serif)))
+            let fontSize = ornament != nil ? w * 0.22 : w * 0.30
+            var monogram = context.resolve(Text("Д").font(.system(size: fontSize, weight: .bold, design: .serif)))
             monogram.shading = .color(gold)
             let bounds = CGSize(width: 10_000, height: 10_000)
             let baseline = monogram.firstBaseline(in: bounds)
-            let capHeight = w * 0.30 * 0.7
+            let capHeight = fontSize * 0.7
             context.draw(monogram, at: CGPoint(x: center.x, y: center.y + capHeight / 2 - baseline), anchor: .top)
         } else {
             context.fill(Path(outline: Outline.circle(center: center, radius: w * 0.07)), with: .color(gold))

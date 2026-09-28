@@ -345,20 +345,41 @@ private struct TileButtonBody: View {
 
 // MARK: - Игроки
 
-/// Аватар персонажа: эмодзи на круге его цвета — так же, как за столом (`SeatAvatar`).
+/// Аватар персонажа: портрет (или эмодзи) на круге его цвета — так же, как за столом (`SeatAvatar`).
 struct PersonaAvatarView: View {
     let persona: Persona
     var size: CGFloat = 40
 
     var body: some View {
         let tint = Theme.seatTint(persona.tint)
-        Text(persona.avatar)
-            .font(.system(size: size * 0.54))
+        ZStack {
+            if let portrait = CardArt.avatarImageName(persona) {
+                PortraitImage(name: portrait, size: size)
+            } else {
+                Text(persona.avatar)
+                    .font(.system(size: size * 0.54))
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Circle().fill(LinearGradient(colors: [tint, tint.opacity(0.72)],
+                                                 startPoint: .top, endPoint: .bottom)))
+        .overlay(Circle().strokeBorder(Theme.ivory.opacity(0.75), lineWidth: 1.5))
+        .accessibilityHidden(true)
+    }
+}
+
+/// Портрет персонажа, вписанный в круг аватара.
+struct PortraitImage: View {
+    let name: String
+    let size: CGFloat
+
+    var body: some View {
+        Image(name)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFill()
             .frame(width: size, height: size)
-            .background(Circle().fill(LinearGradient(colors: [tint, tint.opacity(0.72)],
-                                                     startPoint: .top, endPoint: .bottom)))
-            .overlay(Circle().strokeBorder(Theme.ivory.opacity(0.75), lineWidth: 1.5))
-            .accessibilityHidden(true)
+            .clipShape(Circle())
     }
 }
 
