@@ -275,6 +275,67 @@ final class BeliefNet: @unchecked Sendable {
 }
 
 extension WorldSampler {
+    /// Мир, в котором каждая невидимая карта положена туда, где она вероятнее по «чутью» (с крутизной
+    /// `tau`), с учётом того, сколько карт у кого должно быть и у кого кончились масти.
+    /// Сначала раскладываются карты, которым меньше всего мест. nil — расклад не сложился.
+    static func sampleFromBelief(_ info: PlayInfo, v: SeatView, logP: [Float], tau: Double,
+                                 rng: inout SplitMix64) -> [UInt32]? {
+        let n = info.n
+        var cards = info.pool
+        cards.shuffle(using: &rng)
+        var optionsBySuit = [Int](repeating: 0, count: 4)
+        for suit in 0..<4 {
+            var count = info.stockNeed > 0 ? 1 : 0
+            for s in 0..<n where s != info.seat && info.need[s] > 0 && info.voids[s] & (1 << suit) == 0 { count += 1 }
+            optionsBySuit[suit] = count
+        }
+        var ordered: [Int] = []
+        ordered.reserveCapacity(cards.count)
+        for options in 0...3 {
+            for id in cards where optionsBySuit[id >> 3] == options { ordered.append(id) }
+        }
+        var cap = info.need
+        var stockCap = info.stockNeed
+        var hands = [UInt32](repeating: 0, count: n)
+        hands[info.seat] = info.myHand
+        for s in 0..<n where s != info.seat { hands[s] = info.known[s] }
+        var targets = [Int](repeating: 0, count: 3)
+        var weights = [Double](repeating: 0, count: 3)
+        for c in ordered {
+            var k = 0
+            var total = 0.0
+            for s in 0..<n where s != info.seat && cap[s] > 0 && info.voids[s] & (1 << (c >> 3)) == 0 {
+                let w = exp(tau * Double(logP[c * 3 + BeliefFeatures.rel(s, v) - 1]))
+                targets[k] = s
+                weights[k] = w
+                total += w
+                k += 1
+            }
+            if stockCap > 0 {
+                let w = exp(tau * Double(logP[c * 3 + 2]))
+                targets[k] = -1
+                weights[k] = w
+                total += w
+                k += 1
+            }
+            guard k > 0 else { return nil }
+            var r = Double(rng.next() >> 11) / Double(1 << 53) * total
+            var pick = k - 1
+            for j in 0..<k {
+                r -= weights[j]
+                if r <= 0 { pick = j; break }
+            }
+            let t = targets[pick]
+            if t < 0 {
+                stockCap -= 1
+            } else {
+                hands[t] |= bit(c)
+                cap[t] -= 1
+            }
+        }
+        return hands
+    }
+
     /// Вес мира по «чутью»: сумма логарифмов вероятностей того, где в этом мире лежит каждая
     /// невидимая карта (`hands` — у кого что сейчас; остальные невидимые — ни у кого).
     static func beliefLogWeight(_ v: SeatView, logP: [Float], unknown: UInt32, hands: [UInt32]) -> Double {

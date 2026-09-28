@@ -84,6 +84,8 @@ public struct Bot: Sendable {
         public var valueBid: Bool
         /// В торговле с ценой паса предсказывать ответ соперника сетью заявок (`BidPolicyNet`).
         public var bidPolicy: Bool
+        /// С «чутьём» раскладывать карты прямо по вероятностям сети, а не отбирать из случайных миров.
+        public var beliefDirect: Bool
 
         public init(biddingSamples: Int, takeThreshold: Double, nameThreshold: Double,
                     feelShift: Double = 0, feelNoise: Double = 0, forcedAware: Bool, exchange: ExchangeMode,
@@ -91,7 +93,8 @@ public struct Bot: Sendable {
                     inferInBidding: Bool = false, memoryTricks: Int? = nil, slipPercent: Int = 0,
                     rolloutExact: Int = 0, tieMargin: Double = 0, timeBudget: Double? = nil,
                     exactSolver: Bool = false, playInference: Double = 0, auctionModel: Bool = false,
-                    belief: Double = 0, valueNet: Bool = false, valueBid: Bool = false, bidPolicy: Bool = false) {
+                    belief: Double = 0, valueNet: Bool = false, valueBid: Bool = false, bidPolicy: Bool = false,
+                    beliefDirect: Bool = false) {
             self.biddingSamples = biddingSamples
             self.takeThreshold = takeThreshold
             self.nameThreshold = nameThreshold
@@ -116,6 +119,7 @@ public struct Bot: Sendable {
             self.valueNet = valueNet
             self.valueBid = valueBid
             self.bidPolicy = bidPolicy
+            self.beliefDirect = beliefDirect
         }
 
         /// Настройки уровня и стиля.
@@ -791,7 +795,25 @@ public struct Bot: Sendable {
         let net = config.belief > 0 ? BeliefNet.shared : nil
         guard readPlays || net != nil else { return WorldSampler.sampleInformed(v, info: info, count: count, rng: &rng) }
         var candidates: (worlds: [[UInt32]], weights: [Double])
-        if let net {
+        if let net, config.beliefDirect {
+            // «Чутьё»: каждая карта сразу кладётся туда, где она вероятнее по сети.
+            let logP = net.logProbabilities(v)
+            let target = readPlays ? count * 2 : count
+            var kept: [[UInt32]] = []
+            kept.reserveCapacity(target)
+            var attempts = 0
+            while kept.count < target && attempts < target * 20 {
+                attempts += 1
+                guard let world = WorldSampler.sampleFromBelief(info, v: v, logP: logP, tau: config.belief, rng: &rng)
+                else { continue }
+                if attempts > target * 10 || WorldSampler.consistentWithDeclarations(v, info: info, world: world, trump: trump) {
+                    kept.append(world)
+                }
+            }
+            while kept.count < target { kept.append(WorldSampler.samplePlay(info, rng: &rng)) }
+            guard readPlays else { return kept }
+            candidates = (kept, [Double](repeating: 1, count: kept.count))
+        } else if let net {
             // «Чутьё»: из вчетверо большего числа миров оставляем правдоподобные по сети (она уже
             // учитывает торговлю, поэтому вес по модели торговли не нужен).
             let pool = WorldSampler.informedCandidates(v, info: info, trump: trump, count: count * 4,
