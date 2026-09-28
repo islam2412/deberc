@@ -73,7 +73,7 @@ scripts/simulator-smoke-test.sh run build/DerivedData/Build/Products/Debug-iphon
 
 ## Иконка и картинка для README
 
-- Иконка рисуется из `scripts/icon/icon.html` в трёх вариантах — обычная, тёмная и тонированная: `node scripts/icon/render-icons.js` (нужен Playwright).
+- Иконка — валет пик и рубашка с орнаментом на сукне, карты нарисованы по той же геометрии, что в игре. Три варианта (обычная, тёмная, тонированная): `python3 scripts/icon/render_kchr_icon.py install jack-back` (нужны Pillow и исходники в `art-raw/`, см. [ART.md](docs/ART.md)).
 - `docs/preview.png` собирает `scripts/make-preview.py` из скриншотов. Workflow «Скриншоты для App Store» делает это сам: картинка лежит в артефакте `preview`.
 
 ## TestFlight
