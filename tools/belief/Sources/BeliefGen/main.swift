@@ -11,6 +11,9 @@ import DebercKit
 // Последний параметр — `Config.belief` облегчённого Мастера (0 — без сети; 1 — Мастер с «чутьём»,
 // чтобы следующая сеть училась угадывать карты такого соперника).
 //
+// Вдвоём заодно пишутся решения Мастера в торговле — в `<файл>.bids` для сети заявок соперника:
+// `BidFeatures.count` байт признаков (0/1) и байт ответа (0 — пас, 1 — беру, 2…5 — масть).
+//
 // Запись: `BeliefFeatures.count` байт признаков (значение × 255) и 32 байта ответов.
 
 let args = CommandLine.arguments
@@ -55,6 +58,10 @@ guard let out = FileHandle(forWritingAtPath: outPath) else {
     FileHandle.standardError.write("cannot open \(outPath)\n".data(using: .utf8)!)
     exit(1)
 }
+let bidsPath = outPath + ".bids"
+FileManager.default.createFile(atPath: bidsPath, contents: nil)
+let bidsOut = FileHandle(forWritingAtPath: bidsPath)!
+var bidsWritten = 0
 let lock = NSLock()
 var written = 0
 var dealsDone = 0
@@ -66,13 +73,17 @@ DispatchQueue.concurrentPerform(iterations: threads) { worker in
     var played = 0
     var buffer = [UInt8]()
     buffer.reserveCapacity(recordSize * 4096)
+    var bidBuffer = [UInt8]()
     func flush() {
-        guard !buffer.isEmpty else { return }
+        guard !buffer.isEmpty || !bidBuffer.isEmpty else { return }
         lock.lock()
         out.write(Data(buffer))
         written += buffer.count / recordSize
+        bidsOut.write(Data(bidBuffer))
+        bidsWritten += bidBuffer.count / (BidFeatures.count + 1)
         lock.unlock()
         buffer.removeAll(keepingCapacity: true)
+        bidBuffer.removeAll(keepingCapacity: true)
     }
     while played < share {
         let bots = (0..<players).map { _ in pickBot(&rng) }
@@ -102,6 +113,11 @@ DispatchQueue.concurrentPerform(iterations: threads) { worker in
             }
             if buffer.count >= recordSize * 4000 { flush() }
             let action = bots[actor].chooseAction(match: match, seat: actor, rng: &rng)
+            if players == 2, bots[actor].level == .master, let label = BidFeatures.label(action),
+               let x = BidFeatures.encode(SeatView(match: match, seat: actor)) {
+                for value in x { bidBuffer.append(UInt8(value)) }
+                bidBuffer.append(UInt8(label))
+            }
             do { _ = try match.apply(action) } catch { break }
         }
         flush()
@@ -115,5 +131,6 @@ DispatchQueue.concurrentPerform(iterations: threads) { worker in
     }
 }
 try? out.close()
-print(String(format: "BeliefGen %dp: %d records (%d bytes each) in %.0f s -> %@", players, written, recordSize,
-             Date().timeIntervalSince(started), outPath))
+try? bidsOut.close()
+print(String(format: "BeliefGen %dp: %d records (%d bytes each), %d bidding decisions in %.0f s -> %@", players, written,
+             recordSize, bidsWritten, Date().timeIntervalSince(started), outPath))

@@ -82,6 +82,8 @@ public struct Bot: Sendable {
         public var valueNet: Bool
         /// Втроём оценивать заявку той же сетью (с первого хода) вместо доигрывания.
         public var valueBid: Bool
+        /// В торговле с ценой паса предсказывать ответ соперника сетью заявок (`BidPolicyNet`).
+        public var bidPolicy: Bool
 
         public init(biddingSamples: Int, takeThreshold: Double, nameThreshold: Double,
                     feelShift: Double = 0, feelNoise: Double = 0, forcedAware: Bool, exchange: ExchangeMode,
@@ -89,7 +91,7 @@ public struct Bot: Sendable {
                     inferInBidding: Bool = false, memoryTricks: Int? = nil, slipPercent: Int = 0,
                     rolloutExact: Int = 0, tieMargin: Double = 0, timeBudget: Double? = nil,
                     exactSolver: Bool = false, playInference: Double = 0, auctionModel: Bool = false,
-                    belief: Double = 0, valueNet: Bool = false, valueBid: Bool = false) {
+                    belief: Double = 0, valueNet: Bool = false, valueBid: Bool = false, bidPolicy: Bool = false) {
             self.biddingSamples = biddingSamples
             self.takeThreshold = takeThreshold
             self.nameThreshold = nameThreshold
@@ -113,6 +115,7 @@ public struct Bot: Sendable {
             self.belief = belief
             self.valueNet = valueNet
             self.valueBid = valueBid
+            self.bidPolicy = bidPolicy
         }
 
         /// Настройки уровня и стиля.
@@ -325,10 +328,30 @@ public struct Bot: Sendable {
         let oppFirst = !iSpeakFirst
         var weight = [Double](repeating: 1, count: n), takes = weight, names = weight
         var named = [Int](repeating: 0, count: n)
+        let policy = config.bidPolicy ? BidPolicyNet.shared : nil
+        // Что будет сказано к моменту решения соперника: в 1-м круге — мой пас (если я говорю первым),
+        // во 2-м — пасы 1-го круга и мой пас во 2-м (если я говорю первым).
+        let myPass1 = Bid(seat: me, round: 1, kind: .pass, suit: nil)
+        let bids1 = round == 1 && iSpeakFirst ? v.bids + [myPass1] : v.bids
+        var bids2 = v.bids
+        if round == 1 {
+            bids2.append(myPass1)
+            if iSpeakFirst { bids2.append(Bid(seat: opp, round: 1, kind: .pass, suit: nil)) }
+        }
+        if iSpeakFirst { bids2.append(Bid(seat: me, round: 2, kind: .pass, suit: nil)) }
         for i in 0..<n {
             let h = worlds[i].hands[opp]
             weight[i] = net != nil ? 1 : BidModel.likelihood(bids: v.bids, seat: opp, hand6: h, open: v.openCard,
                                                              dealer: v.dealer, players: 2)
+            if let policy {
+                takes[i] = policy.probabilities(hand6: h, open: v.openCard, round: 1, seat: opp, dealer: v.dealer,
+                                                playerCount: 2, bids: bids1, forcedSeat: v.forcedSeatIfAllPass)[1]
+                let p2 = policy.probabilities(hand6: h, open: v.openCard, round: 2, seat: opp, dealer: v.dealer,
+                                              playerCount: 2, bids: bids2, forcedSeat: v.forcedSeatIfAllPass)
+                names[i] = 1 - p2[0]
+                named[i] = (0..<4).filter { $0 != open }.max { p2[2 + $0] < p2[2 + $1] } ?? 0
+                continue
+            }
             takes[i] = BidModel.probability(h, trump: open, open: v.openCard, round: 1, leadsFirst: oppFirst,
                                             weights: model)
             var pass = 1.0, top = -1.0
