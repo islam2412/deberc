@@ -52,12 +52,12 @@ final class BeliefTests: XCTestCase {
     }
 
     func testHalfFloatConversion() {
-        XCTAssertEqual(BeliefNet.float(half: 0x3C00), 1)
-        XCTAssertEqual(BeliefNet.float(half: 0xC000), -2)
-        XCTAssertEqual(BeliefNet.float(half: 0x3555), 0.333251953125)
-        XCTAssertEqual(BeliefNet.float(half: 0x0001), 5.9604645e-8)          // наименьшее ненормализованное
-        XCTAssertEqual(BeliefNet.float(half: 0x7BFF), 65504)
-        XCTAssertEqual(BeliefNet.float(half: 0x7C00), .infinity)
+        XCTAssertEqual(DenseNet.float(half: 0x3C00), 1)
+        XCTAssertEqual(DenseNet.float(half: 0xC000), -2)
+        XCTAssertEqual(DenseNet.float(half: 0x3555), 0.333251953125)
+        XCTAssertEqual(DenseNet.float(half: 0x0001), 5.9604645e-8)          // наименьшее ненормализованное
+        XCTAssertEqual(DenseNet.float(half: 0x7BFF), 65504)
+        XCTAssertEqual(DenseNet.float(half: 0x7C00), .infinity)
     }
 
     /// Мастер с «чутьём» тоже решает только по тому, что видно со своего места.

@@ -132,11 +132,11 @@ public enum BeliefFeatures {
 
 // MARK: - Сеть
 
-/// Сеть «чутья»: несколько полносвязных слоёв с ReLU, веса — в ресурсе `belief.bin`
-/// (число слоёв, затем для каждого — входы, выходы, веса [выход][вход] и сдвиги; веса во float32
-/// у формата BLF1 и во float16 у BLF2, сдвиги — всегда float32). Файл пишет `tools/belief/train.py`.
-/// Считается на процессоре за доли миллисекунды: входы почти все нулевые, их пропускаем.
-final class BeliefNet: @unchecked Sendable {
+/// Небольшая полносвязная сеть с ReLU между слоями. Веса — в ресурсе пакета: число слоёв, затем для
+/// каждого — входы, выходы, веса [выход][вход] и сдвиги; веса во float32 у формата BLF1 и во float16
+/// у BLF2, сдвиги — всегда float32. Файлы пишут скрипты из `tools/belief`.
+/// Считается на процессоре за доли миллисекунды: нулевые входы пропускаются.
+final class DenseNet: @unchecked Sendable {
     private struct Layer {
         let inputs: Int
         let outputs: Int
@@ -146,13 +146,15 @@ final class BeliefNet: @unchecked Sendable {
     }
 
     private let layers: [Layer]
+    var inputs: Int { layers[0].inputs }
+    var outputs: Int { layers[layers.count - 1].outputs }
 
-    /// Сеть из ресурсов пакета (nil — ресурса нет или он не читается).
-    static let shared: BeliefNet? = {
-        guard let url = Bundle.module.url(forResource: "belief", withExtension: "bin"),
+    /// Сеть из ресурса пакета `name.bin` (nil — ресурса нет или он не читается).
+    static func resource(_ name: String) -> DenseNet? {
+        guard let url = Bundle.module.url(forResource: name, withExtension: "bin"),
               let data = try? Data(contentsOf: url) else { return nil }
-        return BeliefNet(data: data)
-    }()
+        return DenseNet(data: data)
+    }
 
     init?(data: Data) {
         let bytes = [UInt8](data)
@@ -174,7 +176,7 @@ final class BeliefNet: @unchecked Sendable {
         func halves(_ n: Int) -> [Float]? {
             guard offset + 2 * n <= bytes.count else { return nil }
             defer { offset += 2 * n }
-            return (0..<n).map { k in BeliefNet.float(half: UInt16(bytes[offset + 2 * k]) | UInt16(bytes[offset + 2 * k + 1]) << 8) }
+            return (0..<n).map { k in DenseNet.float(half: UInt16(bytes[offset + 2 * k]) | UInt16(bytes[offset + 2 * k + 1]) << 8) }
         }
         guard bytes.count >= 8 else { return nil }
         let magic = Array(bytes[0..<4])
@@ -186,12 +188,12 @@ final class BeliefNet: @unchecked Sendable {
         for _ in 0..<count {
             guard let inputs = u32(), let outputs = u32(),
                   let w = half ? halves(inputs * outputs) : floats(inputs * outputs), let b = floats(outputs) else { return nil }
+            if let previous = layers.last, previous.outputs != inputs { return nil }
             var transposed = [Float](repeating: 0, count: inputs * outputs)
             for j in 0..<outputs { for i in 0..<inputs { transposed[i * outputs + j] = w[j * inputs + i] } }
             layers.append(Layer(inputs: inputs, outputs: outputs, weights: transposed, bias: b))
         }
-        guard layers.first?.inputs == BeliefFeatures.count,
-              layers.last?.outputs == 32 * BeliefFeatures.classes, offset == bytes.count else { return nil }
+        guard offset == bytes.count else { return nil }
         self.layers = layers
     }
 
@@ -208,8 +210,8 @@ final class BeliefNet: @unchecked Sendable {
         return Float(bitPattern: sign | UInt32(exponent + 112) << 23 | fraction << 13)
     }
 
-    /// Выход сети — «сырые» оценки: [карта × 3 класса].
-    func logits(_ features: [Float]) -> [Float] {
+    /// Выход сети для входа `features`.
+    func forward(_ features: [Float]) -> [Float] {
         var input = features
         for (k, layer) in layers.enumerated() {
             var output = layer.bias
@@ -232,6 +234,27 @@ final class BeliefNet: @unchecked Sendable {
         }
         return input
     }
+}
+
+/// Сеть «чутья» (веса — `belief.bin`, обучает `tools/belief/train.py`).
+final class BeliefNet: @unchecked Sendable {
+    private let net: DenseNet
+
+    /// Сеть из ресурсов пакета (nil — ресурса нет или он не той формы).
+    static let shared: BeliefNet? = DenseNet.resource("belief").flatMap(BeliefNet.init(net:))
+
+    init?(net: DenseNet) {
+        guard net.inputs == BeliefFeatures.count, net.outputs == 32 * BeliefFeatures.classes else { return nil }
+        self.net = net
+    }
+
+    convenience init?(data: Data) {
+        guard let net = DenseNet(data: data) else { return nil }
+        self.init(net: net)
+    }
+
+    /// Выход сети — «сырые» оценки: [карта × 3 класса].
+    func logits(_ features: [Float]) -> [Float] { net.forward(features) }
 
     /// Логарифмы вероятностей, где сейчас каждая карта: `[карта * 3 + класс]`, класс 0 — у следующего
     /// по кругу, 1 — у следующего за ним, 2 — ни у кого. Вдвоём класс 1 невозможен (−∞).

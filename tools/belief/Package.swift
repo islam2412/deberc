@@ -10,5 +10,6 @@ let package = Package(
     targets: [
         .executableTarget(name: "BeliefGen", dependencies: [.product(name: "DebercKit", package: "DebercKit")]),
         .executableTarget(name: "BeliefDuel", dependencies: [.product(name: "DebercKit", package: "DebercKit")]),
+        .executableTarget(name: "ValueGen", dependencies: [.product(name: "DebercKit", package: "DebercKit")]),
     ]
 )

@@ -78,6 +78,8 @@ public struct Bot: Sendable {
         /// «Чутьё» (`BeliefNet`): миры, в которых карты лежат так, как подсказывает сеть по торговле
         /// и ходам, вероятнее. Число — насколько доверять сети (0 — не использовать).
         public var belief: Double
+        /// Втроём оценивать ход сетью (`ValueNet`) вместо доигрывания сдачи по простым правилам.
+        public var valueNet: Bool
 
         public init(biddingSamples: Int, takeThreshold: Double, nameThreshold: Double,
                     feelShift: Double = 0, feelNoise: Double = 0, forcedAware: Bool, exchange: ExchangeMode,
@@ -85,7 +87,7 @@ public struct Bot: Sendable {
                     inferInBidding: Bool = false, memoryTricks: Int? = nil, slipPercent: Int = 0,
                     rolloutExact: Int = 0, tieMargin: Double = 0, timeBudget: Double? = nil,
                     exactSolver: Bool = false, playInference: Double = 0, auctionModel: Bool = false,
-                    belief: Double = 0) {
+                    belief: Double = 0, valueNet: Bool = false) {
             self.biddingSamples = biddingSamples
             self.takeThreshold = takeThreshold
             self.nameThreshold = nameThreshold
@@ -107,6 +109,7 @@ public struct Bot: Sendable {
             self.playInference = playInference
             self.auctionModel = auctionModel
             self.belief = belief
+            self.valueNet = valueNet
         }
 
         /// Настройки уровня и стиля.
@@ -657,6 +660,7 @@ public struct Bot: Sendable {
         }
         let alphaBeta = n == 2 && handSize <= config.exactTwoPlayers
         let maxN = n == 3 && handSize <= config.exactThreePlayers
+        let valueNet = config.valueNet && n == 3 && ValueFeatures.supports(v.rules) ? ValueNet.shared : nil
         let target = config.playSamples
         let minimum = max(4, target / 4)
         let started = DispatchTime.now().uptimeNanoseconds
@@ -684,6 +688,8 @@ public struct Bot: Sendable {
                     scores[i] += Search.alphaBeta(s, ctx, me: v.seat, alpha: -.infinity, beta: .infinity)
                 } else if maxN {
                     scores[i] += Search.maxN(s, ctx)[v.seat]
+                } else if let valueNet {
+                    scores[i] += valueNet.utility(s, ctx, me: v.seat)
                 } else {
                     scores[i] += finishRollout(s, ctx, me: v.seat)
                 }
