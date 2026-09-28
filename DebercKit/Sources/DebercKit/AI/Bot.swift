@@ -8,7 +8,9 @@ import Foundation
 ///
 /// Розыгрыш: для каждой допустимой карты моделирует доигрывание сдачи в случайных
 /// мирах, согласованных с тем, что видно на столе; в конце сдачи — точный перебор
-/// (вдвоём — альфа-бета). Мастер вдобавок раздаёт миры с учётом торговли соперников.
+/// (вдвоём — альфа-бета). Мастер вдобавок раздаёт миры с учётом торговли соперников,
+/// а вдвоём решает каждый мир точно от первой карты до последней (`TwoPlayerSolver`) —
+/// и в розыгрыше, и при оценке заявки.
 /// Новичок играет по простым правилам, забывает старые взятки и иногда ходит «на автомате».
 ///
 /// Бот принимает решения только по `SeatView` — чужих карт он не видит.
@@ -63,12 +65,23 @@ public struct Bot: Sendable {
         /// Мягкий предел времени на ход в секундах (nil — без предела). Когда он исчерпан,
         /// бот доигрывает с тем числом миров, что успел (но не меньше четверти).
         public var timeBudget: Double?
+        /// Вдвоём решать каждый мир точно до конца сдачи (`TwoPlayerSolver`) — и в розыгрыше,
+        /// и в торговле — вместо доигрывания по эвристике.
+        public var exactSolver: Bool
+        /// Вдвоём (вместе с `exactSolver`) «читать» уже сделанные ходы соперника: миры, где его ходы
+        /// выглядят разумными, вероятнее. Число — крутизна модели соперника на очко разницы
+        /// (0 — не читать). Бот по-прежнему видит только стол: вес мира считается по его догадке.
+        public var playInference: Double
+        /// Вдвоём (вместе с `exactSolver`) сравнивать заявку не с постоянным порогом, а с ценой
+        /// паса: что потом скажет соперник и что останется самому (`auctionBid`).
+        public var auctionModel: Bool
 
         public init(biddingSamples: Int, takeThreshold: Double, nameThreshold: Double,
                     feelShift: Double = 0, feelNoise: Double = 0, forcedAware: Bool, exchange: ExchangeMode,
                     playSamples: Int, exactTwoPlayers: Int, exactThreePlayers: Int, inferFromBidding: Bool,
                     inferInBidding: Bool = false, memoryTricks: Int? = nil, slipPercent: Int = 0,
-                    rolloutExact: Int = 0, tieMargin: Double = 0, timeBudget: Double? = nil) {
+                    rolloutExact: Int = 0, tieMargin: Double = 0, timeBudget: Double? = nil,
+                    exactSolver: Bool = false, playInference: Double = 0, auctionModel: Bool = false) {
             self.biddingSamples = biddingSamples
             self.takeThreshold = takeThreshold
             self.nameThreshold = nameThreshold
@@ -86,6 +99,9 @@ public struct Bot: Sendable {
             self.tieMargin = tieMargin
             self.rolloutExact = rolloutExact
             self.timeBudget = timeBudget
+            self.exactSolver = exactSolver
+            self.playInference = playInference
+            self.auctionModel = auctionModel
         }
 
         /// Настройки уровня и стиля.
@@ -110,7 +126,7 @@ public struct Bot: Sendable {
                 c = Config(biddingSamples: 128, takeThreshold: 4, nameThreshold: -5,
                            forcedAware: true, exchange: .simulate,
                            playSamples: 160, exactTwoPlayers: 6, exactThreePlayers: 4, inferFromBidding: true,
-                           timeBudget: 0.9)
+                           timeBudget: 0.9, exactSolver: true, playInference: 0.15, auctionModel: true)
             }
             c.takeThreshold += style.takeShift
             c.nameThreshold += style.nameShift
@@ -182,11 +198,12 @@ public struct Bot: Sendable {
         guard let deal = match.deal, !match.isOver, deal.actor == seat else { return nil }
         let view = SeatView(match: match, seat: seat)
         var config = Config.preset(.master)
-        #if DEBUG
-        // Отладочная сборка в разы медленнее: ограничиваем время, чтобы совет не заставлял ждать.
-        config.timeBudget = 2.0
-        #else
+        // Без предела времени: сколько миров успеть, зависело бы от загрузки, и совет мог бы меняться.
         config.timeBudget = nil
+        #if DEBUG
+        // Отладочная сборка в разы медленнее: считаем меньше миров, чтобы совет не заставлял ждать.
+        config.playSamples = 40
+        config.biddingSamples = 32
         #endif
         let bot = Bot(config: config, level: .master, style: .balanced)
         var rng = SplitMix64(seed: view.positionHash ^ 0x5EED_C0DE)
@@ -237,6 +254,9 @@ public struct Bot: Sendable {
 
     func bid(_ v: SeatView, round: Int, rng: inout SplitMix64) -> Action {
         if config.biddingSamples == 0 { return bidByFeel(v, round: round, rng: &rng) }
+        if config.auctionModel && config.exactSolver && v.playerCount == 2 {
+            return auctionBid(v, round: round, rng: &rng)
+        }
         let open = v.openCard.suit
         if round == 1 {
             let ev = evaluateBid(v, trumps: [open], rng: &rng)[0]
@@ -252,6 +272,110 @@ public struct Bot: Sendable {
     /// Порог «назвать масть» во 2-м круге с учётом «обязов».
     func nameThreshold(_ v: SeatView) -> Double {
         config.nameThreshold + forcedShift(v)
+    }
+
+    // MARK: Торговля с ценой паса (вдвоём)
+
+    /// Пороги уровня, от которых отсчитывается сдвиг стиля (см. `Config.preset`).
+    static let baseTakeThreshold = 4.0
+    static let baseNameThreshold = -5.0
+
+    /// Вдвоём при точном решателе: заявка сравнивается с ценой паса на тех же мирах.
+    /// В каждом мире сдача решается точно при каждом козыре — и когда играть возьмусь я, и когда
+    /// соперник. Что соперник скажет в ответ, оценивает модель торговли (`BidModel.strong2`)
+    /// по его руке в этом мире, его прошлые заявки дают вес миру. Свои будущие решения бот
+    /// принимает по тем же мирам. Стиль — запас над ценой паса (у ровного — ноль).
+    func auctionBid(_ v: SeatView, round: Int, rng: inout SplitMix64) -> Action {
+        let me = v.seat, opp = 1 - v.seat
+        let open = v.openCard.suit.rawValue
+        let iSpeakFirst = me == v.next(v.dealer)
+        let trumps = round == 1 ? Suit.allCases : Suit.allCases.filter { $0.rawValue != open }
+        let samples = max(1, config.biddingSamples)
+        let worlds = (0..<samples).map { _ in WorldSampler.sampleBidding(v, rng: &rng) }
+        // [масть][0 — играю я, 1 — играет соперник] — итог сдачи для меня.
+        let tables = Bot.solveWorlds(worlds.count, minimum: max(8, samples / 4), budget: config.timeBudget) { solver, i -> [[Double]] in
+            var u = [[Double]](repeating: [0, 0], count: 4)
+            for t in trumps {
+                for (k, bidder) in [me, opp].enumerated() {
+                    u[t.rawValue][k] = self.solvedDeal(v, hands6: worlds[i].hands, prikup: worlds[i].prikup,
+                                                       trump: t, bidder: bidder, solver: solver)
+                }
+            }
+            return u
+        }
+        let n = tables.count
+        // Соперник в каждом мире: правдоподобие сказанного, «беру» в 1-м круге, «называю» во 2-м и какую.
+        let model = BidModel.strong(players: 2)
+        let oppFirst = !iSpeakFirst
+        var weight = [Double](repeating: 1, count: n), takes = weight, names = weight
+        var named = [Int](repeating: 0, count: n)
+        for i in 0..<n {
+            let h = worlds[i].hands[opp]
+            weight[i] = BidModel.likelihood(bids: v.bids, seat: opp, hand6: h, open: v.openCard,
+                                            dealer: v.dealer, players: 2)
+            takes[i] = BidModel.probability(h, trump: open, open: v.openCard, round: 1, leadsFirst: oppFirst,
+                                            weights: model)
+            var pass = 1.0, top = -1.0
+            for s in 0..<4 where s != open {
+                let p = BidModel.probability(h, trump: s, open: v.openCard, round: 2, leadsFirst: oppFirst,
+                                             weights: model)
+                pass *= 1 - p
+                if p > top { top = p; named[i] = s }
+            }
+            names[i] = 1 - pass
+        }
+        // «Все пас»: пересдача или, при «обязах», сдача втёмную тому, кто говорит первым.
+        var redeal = 0.0
+        if config.forcedAware, let forced = v.forcedSeatIfAllPass {
+            redeal = forced == me ? -0.8 * Bot.forcedPassValue : Bot.forcedPassValue
+        }
+        func mean(_ value: (Int) -> Double, _ w: (Int) -> Double) -> Double {
+            var sum = 0.0, total = 0.0
+            for i in 0..<n {
+                let x = w(i)
+                sum += x * value(i)
+                total += x
+            }
+            return total > 0 ? sum / total : 0
+        }
+        let takeMargin = config.takeThreshold - Bot.baseTakeThreshold
+        let nameMargin = config.nameThreshold - Bot.baseNameThreshold
+        let seconds = trumps.filter { $0.rawValue != open }.map(\.rawValue)
+        /// Мой выбор во 2-м круге при весах миров `w`: лучшая масть и назвать ли её.
+        func secondRound(_ w: (Int) -> Double, last: Bool) -> (name: Bool, suit: Int, pass: (Int) -> Double) {
+            var suit = seconds[0], best = -Double.infinity
+            for s in seconds {
+                let ev = mean({ tables[$0][s][0] }, w)
+                if ev > best { best = ev; suit = s }
+            }
+            // Спасую последним — пересдача; первым — соперник ещё может назвать свою.
+            let pass: (Int) -> Double = last
+                ? { _ in redeal }
+                : { i in names[i] * tables[i][named[i]][1] + (1 - names[i]) * redeal }
+            return (best - mean(pass, w) >= nameMargin, suit, pass)
+        }
+        if round == 1 {
+            let take = mean({ tables[$0][open][0] }, { weight[$0] })
+            let pass: (Int) -> Double
+            if iSpeakFirst {
+                // Отвечает сдающий; спасует и он — во 2-м круге я говорю первым.
+                let later = secondRound({ weight[$0] * (1 - takes[$0]) }, last: false)
+                pass = { i in
+                    let mine = later.name ? tables[i][later.suit][0] : later.pass(i)
+                    return takes[i] * tables[i][open][1] + (1 - takes[i]) * mine
+                }
+            } else {
+                // Во 2-м круге первым говорит соперник, я — последним.
+                let later = secondRound({ weight[$0] * (1 - names[$0]) }, last: true)
+                pass = { i in
+                    let mine = later.name ? tables[i][later.suit][0] : redeal
+                    return names[i] * tables[i][named[i]][1] + (1 - names[i]) * mine
+                }
+            }
+            return take - mean(pass, { weight[$0] }) >= takeMargin ? .take : .pass
+        }
+        let choice = secondRound({ weight[$0] }, last: !iSpeakFirst)
+        return choice.name ? .name(Suit(rawValue: choice.suit)!) : .pass
     }
 
     /// Вдвоём при угрозе «обязов» пас стоит не ноль: если спасует сдающий, соперник
@@ -305,6 +429,15 @@ public struct Bot: Sendable {
         let worlds = config.inferInBidding && v.bids.contains(where: { $0.seat != v.seat })
             ? WorldSampler.sampleBiddingInformed(v, count: samples, rng: &rng)
             : (0..<samples).map { _ in WorldSampler.sampleBidding(v, rng: &rng) }
+        if config.exactSolver && v.playerCount == 2 {
+            // Каждый мир решается точно; миры считаются параллельно, сумма — в одном порядке.
+            let perWorld = Bot.solveWorlds(worlds.count, minimum: max(8, samples / 4), budget: config.timeBudget) { solver, i in
+                trumps.map { self.solvedDeal(v, hands6: worlds[i].hands, prikup: worlds[i].prikup, trump: $0,
+                                             bidder: v.seat, solver: solver) }
+            }
+            for values in perWorld { for i in values.indices { totals[i] += values[i] } }
+            return totals.map { $0 / Double(perWorld.count) }
+        }
         for world in worlds {
             for (i, trump) in trumps.enumerated() {
                 totals[i] += simulateDeal(v, hands6: world.hands, prikup: world.prikup, trump: trump, bidder: v.seat)
@@ -315,6 +448,13 @@ public struct Bot: Sendable {
 
     /// Доигрывание сдачи по правилам в мире торговли, где козырь `trump` назначил `bidder`.
     func simulateDeal(_ v: SeatView, hands6: [UInt32], prikup: [UInt32], trump: Suit, bidder: Int) -> Double {
+        let deal = dealHands(v, hands6: hands6, prikup: prikup, trump: trump, bidder: bidder)
+        return rollout(v, hands: deal.hands, trump: trump, bidder: bidder, seen: deal.seen, firstLead: deal.firstLead)
+    }
+
+    /// Руки после прикупа и обмена семёрки (по быстрому правилу), видимые карты и первый заход.
+    private func dealHands(_ v: SeatView, hands6: [UInt32], prikup: [UInt32], trump: Suit,
+                           bidder: Int) -> (hands: [UInt32], seen: UInt32, firstLead: Int) {
         let rules = v.rules
         let n = v.playerCount
         var hands = (0..<n).map { hands6[$0] | prikup[$0] }
@@ -331,7 +471,26 @@ public struct Bot: Sendable {
         var seen = bit(open.id)
         if let bottom = v.bottomCard { seen |= bit(bottom.id) }
         let firstLead = rules.firstLead == .afterDealer ? v.next(v.dealer) : bidder
-        return rollout(v, hands: hands, trump: trump, bidder: bidder, seen: seen, firstLead: firstLead)
+        return (hands, seen, firstLead)
+    }
+
+    /// Итог сдачи для `v.seat` в мире торговли при точной игре обоих (только вдвоём).
+    private func solvedDeal(_ v: SeatView, hands6: [UInt32], prikup: [UInt32], trump: Suit, bidder: Int,
+                            solver: TwoPlayerSolver) -> Double {
+        let deal = dealHands(v, hands6: hands6, prikup: prikup, trump: trump, bidder: bidder)
+        let order = v.leadOrder(bidder: bidder)
+        let decl = Combinations.declarations(hands: deal.hands.map { m in ids(in: m).map { Card(id: $0) } },
+                                             trump: trump, rules: v.rules, priority: order)
+        let ctx = SimContext(rules: v.rules, playerCount: 2, trump: trump.rawValue, bidder: bidder, priority: order,
+                             declarations: decl, pot: v.pot, baitCounts: v.baitCounts, nakedCounts: v.nakedCounts)
+        let zeros = [0, 0]
+        let bonus = Bot.firstTrickBonus(ctx, tricks: zeros)
+        solver.configure(trump: trump.rawValue, rules: v.rules, bonus: bonus)
+        let value = solver.value(hands: deal.hands, leader: deal.firstLead, flags: Bot.bonusFlags(bonus))
+        var remaining = 0
+        for id in ids(in: deal.hands[0] | deal.hands[1]) { remaining += ctx.points[id] }
+        return Bot.solvedUtility(ctx, me: v.seat, cardPoints: zeros, tricks: zeros, remainingPoints: remaining,
+                                 bonus: bonus, diff: deal.firstLead == v.seat ? value : -value)
     }
 
     /// Разыграть сдачу с начала по эвристике; полезность для `v.seat`.
@@ -469,6 +628,9 @@ public struct Bot: Sendable {
         let t = table(v, trump: trump)
         let info = WorldSampler.PlayInfo(v)
         let handSize = v.myHand.count
+        if config.exactSolver && n == 2 && handSize > config.exactTwoPlayers {
+            return solvedCard(v, legal: legal, trump: trump, bidder: bidder, table: t, info: info, rng: &rng)
+        }
         let alphaBeta = n == 2 && handSize <= config.exactTwoPlayers
         let maxN = n == 3 && handSize <= config.exactThreePlayers
         let target = config.playSamples
@@ -478,7 +640,7 @@ public struct Bot: Sendable {
 
         var worlds: [[UInt32]] = []
         if config.inferFromBidding {
-            worlds = WorldSampler.sampleInformed(v, info: info, count: target, rng: &rng)
+            worlds = informedWorlds(v, info: info, count: target, trump: trump, bidder: bidder, rng: &rng)
         }
 
         var scores = [Double](repeating: 0, count: legal.count)
@@ -505,6 +667,176 @@ public struct Bot: Sendable {
         }
         let tolerance = 0.25 + config.tieMargin * Double(done)
         return legal[Bot.naturalPick(legal: legal, scores: scores, trump: trump, tolerance: tolerance)]
+    }
+
+    /// Вдвоём: в каждом мире — точное решение до конца сдачи (`TwoPlayerSolver`), миры — параллельно.
+    private func solvedCard(_ v: SeatView, legal: [Card], trump: Suit, bidder: Int, table t: Table,
+                            info: WorldSampler.PlayInfo, rng: inout SplitMix64) -> Card {
+        let count = config.playSamples
+        let started = DispatchTime.now().uptimeNanoseconds
+        let worlds = config.inferFromBidding
+            ? informedWorlds(v, info: info, count: count, trump: trump, bidder: bidder, rng: &rng)
+            : (0..<count).map { _ in WorldSampler.samplePlay(info, rng: &rng) }
+        let moves = legal.map(\.id)
+        let tableCard = t.trick.first?.card
+        let minimum = max(4, count / 4)
+        // Время, ушедшее на чтение ходов соперника, вычитается из общего предела.
+        let budget = config.timeBudget.map { max(0, $0 - Double(DispatchTime.now().uptimeNanoseconds - started) / 1e9) }
+        let perWorld = Bot.solveWorlds(worlds.count, minimum: minimum, budget: budget) { solver, i -> [Double] in
+            let hands = worlds[i]
+            let ctx = self.context(v, trump: trump, bidder: bidder, worldHands: hands)
+            let bonus = Bot.firstTrickBonus(ctx, tricks: t.tricks)
+            solver.configure(trump: trump.rawValue, rules: v.rules, bonus: bonus)
+            var remaining = 0
+            for id in ids(in: hands[0] | hands[1]) { remaining += ctx.points[id] }
+            for p in t.trick { remaining += ctx.points[p.card] }
+            let values = solver.moveValues(hands: hands, me: v.seat, tableCard: tableCard,
+                                           flags: Bot.bonusFlags(bonus), moves: moves)
+            return values.map {
+                Bot.solvedUtility(ctx, me: v.seat, cardPoints: t.cardPoints, tricks: t.tricks,
+                                  remainingPoints: remaining, bonus: bonus, diff: $0)
+            }
+        }
+        var scores = [Double](repeating: 0, count: legal.count)
+        for values in perWorld { for i in values.indices { scores[i] += values[i] } }
+        let tolerance = 0.25 + config.tieMargin * Double(perWorld.count)
+        return legal[Bot.naturalPick(legal: legal, scores: scores, trump: trump, tolerance: tolerance)]
+    }
+
+    /// Миры с учётом торговли и объявлений, а вдвоём с `playInference` — ещё и того, как соперник
+    /// уже сыграл: кандидатов вдвое больше, каждый получает вес «насколько его ходы разумны в этом
+    /// мире», затем `count` миров перевыбираются по весам.
+    private func informedWorlds(_ v: SeatView, info: WorldSampler.PlayInfo, count: Int, trump: Suit, bidder: Int,
+                                rng: inout SplitMix64) -> [[UInt32]] {
+        let beta = config.playInference
+        guard beta > 0, config.exactSolver, v.playerCount == 2,
+              (v.tricks + [v.currentTrick]).contains(where: { $0.plays.contains { $0.seat != v.seat } })
+        else { return WorldSampler.sampleInformed(v, info: info, count: count, rng: &rng) }
+        let candidates = WorldSampler.informedCandidates(v, info: info, trump: trump, count: count * 2, rng: &rng)
+        // На чтение — не больше трети предела; не успели — берём тех кандидатов, что успели оценить.
+        let logs = Bot.solveWorlds(candidates.worlds.count, minimum: count,
+                                   budget: config.timeBudget.map { $0 / 3 }) { solver, i in
+            self.playLogLikelihood(v, info: info, world: candidates.worlds[i], trump: trump, bidder: bidder,
+                                   beta: beta, solver: solver)
+        }
+        let worlds = Array(candidates.worlds.prefix(logs.count))
+        // Веса — относительно самого правдоподобного кандидата, чтобы произведения не обнулились.
+        let top = logs.max() ?? 0
+        let weights = logs.indices.map { candidates.weights[$0] * exp(logs[$0] - top) }
+        return WorldSampler.resample(worlds, weights: weights, count: count, rng: &rng)
+    }
+
+    /// Вдвоём: логарифм правдоподобия уже сделанных ходов соперника в мире `world`. Модель
+    /// соперника — «мягкий максимум» по точным оценкам ходов: ход тем вероятнее, чем меньше он
+    /// теряет против лучшего (`beta` — крутизна на очко). Вынужденные ходы ничего не говорят.
+    private func playLogLikelihood(_ v: SeatView, info: WorldSampler.PlayInfo, world: [UInt32], trump: Suit,
+                                   bidder: Int, beta: Double, solver: TwoPlayerSolver) -> Double {
+        var hands = WorldSampler.startHands(info, world: world)
+        let ctx = context(v, trump: trump, bidder: bidder, worldHands: hands)
+        var tricks = [0, 0]
+        var logL = 0.0
+        for trick in v.tricks + [v.currentTrick] {
+            var tableCard: Int? = nil
+            for p in trick.plays {
+                let card = p.card.id
+                if p.seat != v.seat {
+                    let bonus = Bot.firstTrickBonus(ctx, tricks: tricks)
+                    solver.configure(trump: trump.rawValue, rules: v.rules, bonus: bonus)
+                    let legal = solver.legalMoves(hands[p.seat], tableCard: tableCard)
+                    if legal & bit(card) != 0 && legal.nonzeroBitCount > 1 {
+                        let moves = ids(in: legal)
+                        let values = solver.moveValues(hands: hands, me: p.seat, tableCard: tableCard,
+                                                       flags: Bot.bonusFlags(bonus), moves: moves)
+                        let top = Double(values.max()!)
+                        var sum = 0.0
+                        var chosen = 0.0
+                        for (m, value) in zip(moves, values) {
+                            let e = beta * (Double(value) - top)
+                            sum += exp(e)
+                            if m == card { chosen = e }
+                        }
+                        logL += chosen - log(sum)
+                    }
+                }
+                hands[p.seat] &= ~bit(card)
+                tableCard = tableCard == nil ? card : nil
+            }
+            if let w = trick.winner, trick.plays.count == 2 { tricks[w] += 1 }
+        }
+        return logL
+    }
+
+    /// Прибавка за первую взятку вдвоём: комбинации и бэла, которые по правилу «нужна взятка»
+    /// ещё не засчитаны, потому что у владельца пока нет ни одной взятки.
+    static func firstTrickBonus(_ ctx: SimContext, tricks: [Int]) -> [Int] {
+        var bonus = [0, 0]
+        for s in 0..<2 where tricks[s] == 0 {
+            if ctx.meldWinner == s && ctx.rules.combosNeedTrick == .all { bonus[s] += ctx.meldPoints }
+            if ctx.bellaSeat == s && ctx.rules.combosNeedTrick != .none { bonus[s] += ctx.rules.bellaPoints }
+        }
+        return bonus
+    }
+
+    /// Флаги решателя: бит игрока — «прибавки за первую взятку у него нет».
+    static func bonusFlags(_ bonus: [Int]) -> Int {
+        (bonus[0] == 0 ? 1 : 0) | (bonus[1] == 0 ? 2 : 0)
+    }
+
+    /// Итог сдачи для `me` вдвоём по точной будущей разнице «сырых» очков `diff`.
+    /// Будущая сумма известна: оставшиеся карты, +10 за последнюю взятку и отложенные прибавки
+    /// (считаем их полученными — владелец почти всегда берёт хоть одну взятку). Счёт идёт
+    /// обычным `settlementChange` — с байтом, висячими, банком и штрафами.
+    static func solvedUtility(_ ctx: SimContext, me: Int, cardPoints: [Int], tricks: [Int],
+                              remainingPoints: Int, bonus: [Int], diff: Int) -> Double {
+        let rules = ctx.rules
+        var raw = cardPoints.map(Double.init)
+        let w = ctx.meldWinner
+        if w >= 0, rules.combosNeedTrick != .all || tricks[w] > 0 { raw[w] += Double(ctx.meldPoints) }
+        let b = ctx.bellaSeat
+        if b >= 0, rules.combosNeedTrick == .none || tricks[b] > 0 { raw[b] += Double(rules.bellaPoints) }
+        let total = Double(remainingPoints + 10 + bonus[0] + bonus[1])
+        raw[me] += (total + Double(diff)) / 2
+        raw[1 - me] += (total - Double(diff)) / 2
+        let plain = SimContext(rules: rules, playerCount: 2, trump: ctx.trump, bidder: ctx.bidder,
+                               priority: ctx.priority, meldWinner: -1, meldPoints: 0, bellaSeat: -1,
+                               pot: ctx.pot, baitCounts: ctx.baitCounts, nakedCounts: ctx.nakedCounts)
+        let final = SimState(hands: [0, 0], turn: 0, cardPoints: raw.map { Int($0.rounded()) },
+                             tricks: tricks.map { max($0, 1) }, played: 0, tricksLeft: 0, ctx: plain)
+        return final.utility(plain, for: me)
+    }
+
+    /// Решить `count` миров параллельно (у каждого потока свой решатель) партиями, пока не выйдет
+    /// время `budget` — но не меньше `minimum` миров. Результаты — по индексу мира, поэтому сумма
+    /// не зависит от того, какой поток что успел.
+    static func solveWorlds<T>(_ count: Int, minimum: Int, budget: Double?,
+                               _ body: (TwoPlayerSolver, Int) -> T) -> [T] {
+        guard count > 0 else { return [] }
+        let threads = min(count, max(1, min(4, ProcessInfo.processInfo.activeProcessorCount)))
+        let solvers = (0..<threads).map { _ in TwoPlayerSolver() }
+        let started = DispatchTime.now().uptimeNanoseconds
+        let limit = budget.map { UInt64($0 * 1e9) }
+        var results: [T] = []
+        results.reserveCapacity(count)
+        let lock = NSLock()
+        while results.count < count {
+            let first = results.count
+            let size = min(count - first, threads * 4)
+            var batch = [T?](repeating: nil, count: size)
+            DispatchQueue.concurrentPerform(iterations: threads) { t in
+                var local: [(Int, T)] = []
+                var i = t
+                while i < size {
+                    local.append((i, body(solvers[t], first + i)))
+                    i += threads
+                }
+                lock.lock()
+                for (index, value) in local { batch[index] = value }
+                lock.unlock()
+            }
+            results += batch.map { $0! }
+            if let limit, results.count >= minimum, DispatchTime.now().uptimeNanoseconds - started > limit { break }
+        }
+        return results
     }
 
     /// Доиграть сдачу по эвристике; последние `rolloutExact` взяток — точным перебором.

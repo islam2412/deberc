@@ -148,22 +148,28 @@ enum WorldSampler {
     /// Миры с учётом торговли (перевыбор по весам) и объявлений (отбраковка).
     static func sampleInformed(_ v: SeatView, info: PlayInfo, count: Int, rng: inout SplitMix64) -> [[UInt32]] {
         guard let trump = v.trump else { return (0..<count).map { _ in samplePlay(info, rng: &rng) } }
-        let factor = 3
-        var candidates: [[UInt32]] = []
+        let candidates = informedCandidates(v, info: info, trump: trump, count: count * 3, rng: &rng)
+        // Систематический перевыбор: меньше шума, чем независимый.
+        return resample(candidates.worlds, weights: candidates.weights, count: count, rng: &rng)
+    }
+
+    /// Кандидаты для перевыбора: миры, согласованные с объявлениями, и их веса по торговле.
+    static func informedCandidates(_ v: SeatView, info: PlayInfo, trump: Suit, count: Int,
+                                   rng: inout SplitMix64) -> (worlds: [[UInt32]], weights: [Double]) {
+        var worlds: [[UInt32]] = []
         var weights: [Double] = []
-        candidates.reserveCapacity(count * factor)
-        weights.reserveCapacity(count * factor)
-        for _ in 0..<(count * factor) {
+        worlds.reserveCapacity(count)
+        weights.reserveCapacity(count)
+        for _ in 0..<count {
             var world = samplePlay(info, rng: &rng)
             for _ in 0..<12 {
                 if consistentWithDeclarations(v, info: info, world: world, trump: trump) { break }
                 world = samplePlay(info, rng: &rng)
             }
-            candidates.append(world)
+            worlds.append(world)
             weights.append(biddingWeight(v, info: info, world: world))
         }
-        // Систематический перевыбор: меньше шума, чем независимый.
-        return resample(candidates, weights: weights, count: count, rng: &rng)
+        return (worlds, weights)
     }
 
     /// Систематический перевыбор `count` кандидатов по весам.

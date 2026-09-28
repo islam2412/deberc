@@ -369,6 +369,18 @@ final class BotTests: XCTestCase {
 
     // MARK: - Бот видит только своё
 
+    /// Бот без предела времени (и Мастер с меньшим числом миров, чтобы отладочная сборка
+    /// не считала долго): сколько миров решено, не зависит от загрузки машины.
+    private func timeless(_ level: BotLevel) -> Bot {
+        var config = Bot.Config.preset(level)
+        config.timeBudget = nil
+        if level == .master {
+            config.playSamples = 40
+            config.biddingSamples = 32
+        }
+        return Bot(config: config, level: level)
+    }
+
     /// Две раздачи с разными чужими картами, но одинаковым видом со своего места,
     /// дают одинаковые решения.
     func testBotDecidesOnlyFromSeatView() throws {
@@ -386,13 +398,58 @@ final class BotTests: XCTestCase {
         XCTAssertEqual(va, vb)
         XCTAssertEqual(va.positionHash, vb.positionHash)
         for level in BotLevel.allCases {
-            let bot = Bot(level: level)
+            let bot = timeless(level)
             var r1 = SplitMix64(seed: 7), r2 = SplitMix64(seed: 7), r3 = SplitMix64(seed: 7)
             let fromA = bot.chooseAction(match: a, seat: 1, rng: &r1)
             XCTAssertEqual(fromA, bot.chooseAction(match: b, seat: 1, rng: &r2), "\(level)")
             XCTAssertEqual(fromA, bot.chooseAction(view: va, rng: &r3), "\(level)")
         }
         XCTAssertEqual(Bot.hint(match: a, seat: 1), Bot.hint(match: b, seat: 1))
+    }
+
+    /// То же в розыгрыше вдвоём, где Мастер решает каждый мир точно (`TwoPlayerSolver`):
+    /// у соперника совсем разные карты, а вид со своего места одинаковый — ход тот же.
+    func testSolverPlayDecidesOnlyFromSeatView() throws {
+        let mine = cards("Вч 9ч Тп 10т 8б Дп"), myPrikup = cards("7б Вп 7п")
+        // Ни у кого нет комбинаций, бэлы и козырной семёрки — объявлений и обмена не будет;
+        // нижняя карта колоды (Т♥) одна и та же.
+        let deckA = arrangedDeck(dealer: 0, hands: [cards("8п 9п Кт Дт 9б 10б"), mine], open: c("Кч"),
+                                 prikup: [cards("8ч 10ч Тб"), myPrikup])
+        let deckB = arrangedDeck(dealer: 0, hands: [cards("Кп 10п Вт 9т Кб Дб"), mine], open: c("Кч"),
+                                 prikup: [cards("10ч 9б 8т"), myPrikup])
+        var a = Match(playerCount: 2, names: ["A", "B"], rules: .house, seed: 1)
+        var b = Match(playerCount: 2, names: ["A", "B"], rules: .house, seed: 1)
+        a.startDeal(deck: deckA, dealer: 0)
+        b.startDeal(deck: deckB, dealer: 0)
+        try a.apply(.take)
+        try b.apply(.take)
+        let va = SeatView(match: a, seat: 1), vb = SeatView(match: b, seat: 1)
+        XCTAssertEqual(va.phase, .playing)
+        XCTAssertTrue(va.isMyTurn)
+        XCTAssertEqual(va.myHand.count, 9)
+        XCTAssertNotEqual(a.deal!.hands[0], b.deal!.hands[0])
+        XCTAssertEqual(va, vb)
+        let bot = timeless(.master)
+        XCTAssertTrue(bot.config.exactSolver)
+        var r1 = SplitMix64(seed: 7), r2 = SplitMix64(seed: 7)
+        XCTAssertEqual(bot.chooseAction(match: a, seat: 1, rng: &r1), bot.chooseAction(match: b, seat: 1, rng: &r2))
+        XCTAssertEqual(Bot.hint(match: a, seat: 1), Bot.hint(match: b, seat: 1))
+
+        // Соперник ответил (у A он выбирал из двух козырей, у B ход был вынужден) — Мастер «читает»
+        // его ход, но тоже только по столу: решение одно и то же.
+        for card in ["9ч", "10ч"] {
+            try a.apply(.play(c(card)))
+            try b.apply(.play(c(card)))
+        }
+        let wa = SeatView(match: a, seat: 1), wb = SeatView(match: b, seat: 1)
+        XCTAssertTrue(wa.isMyTurn)
+        XCTAssertEqual(wa.myHand.count, 8)
+        XCTAssertEqual(wa, wb)
+        var config = timeless(.master).config
+        config.playInference = max(config.playInference, 0.15)
+        let reader = Bot(config: config, level: .master)
+        var r3 = SplitMix64(seed: 9), r4 = SplitMix64(seed: 9)
+        XCTAssertEqual(reader.chooseAction(match: a, seat: 1, rng: &r3), reader.chooseAction(match: b, seat: 1, rng: &r4))
     }
 
     func testPositionHashIgnoresHandOrder() throws {
