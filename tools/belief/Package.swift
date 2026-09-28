@@ -9,5 +9,6 @@ let package = Package(
     dependencies: [.package(path: "../../DebercKit")],
     targets: [
         .executableTarget(name: "BeliefGen", dependencies: [.product(name: "DebercKit", package: "DebercKit")]),
+        .executableTarget(name: "BeliefDuel", dependencies: [.product(name: "DebercKit", package: "DebercKit")]),
     ]
 )
