@@ -75,13 +75,17 @@ public struct Bot: Sendable {
         /// Вдвоём (вместе с `exactSolver`) сравнивать заявку не с постоянным порогом, а с ценой
         /// паса: что потом скажет соперник и что останется самому (`auctionBid`).
         public var auctionModel: Bool
+        /// «Чутьё» (`BeliefNet`): миры, в которых карты лежат так, как подсказывает сеть по торговле
+        /// и ходам, вероятнее. Число — насколько доверять сети (0 — не использовать).
+        public var belief: Double
 
         public init(biddingSamples: Int, takeThreshold: Double, nameThreshold: Double,
                     feelShift: Double = 0, feelNoise: Double = 0, forcedAware: Bool, exchange: ExchangeMode,
                     playSamples: Int, exactTwoPlayers: Int, exactThreePlayers: Int, inferFromBidding: Bool,
                     inferInBidding: Bool = false, memoryTricks: Int? = nil, slipPercent: Int = 0,
                     rolloutExact: Int = 0, tieMargin: Double = 0, timeBudget: Double? = nil,
-                    exactSolver: Bool = false, playInference: Double = 0, auctionModel: Bool = false) {
+                    exactSolver: Bool = false, playInference: Double = 0, auctionModel: Bool = false,
+                    belief: Double = 0) {
             self.biddingSamples = biddingSamples
             self.takeThreshold = takeThreshold
             self.nameThreshold = nameThreshold
@@ -102,6 +106,7 @@ public struct Bot: Sendable {
             self.exactSolver = exactSolver
             self.playInference = playInference
             self.auctionModel = auctionModel
+            self.belief = belief
         }
 
         /// Настройки уровня и стиля.
@@ -293,7 +298,10 @@ public struct Bot: Sendable {
         let iSpeakFirst = me == v.next(v.dealer)
         let trumps = round == 1 ? Suit.allCases : Suit.allCases.filter { $0.rawValue != open }
         let samples = max(1, config.biddingSamples)
-        let worlds = (0..<samples).map { _ in WorldSampler.sampleBidding(v, rng: &rng) }
+        let net = config.belief > 0 ? BeliefNet.shared : nil
+        // С «чутьём» миры уже подобраны под сказанное соперником — вес по модели торговли не нужен.
+        let worlds = net != nil ? biddingWorlds(v, count: samples, rng: &rng)
+            : (0..<samples).map { _ in WorldSampler.sampleBidding(v, rng: &rng) }
         // [масть][0 — играю я, 1 — играет соперник] — итог сдачи для меня.
         let tables = Bot.solveWorlds(worlds.count, minimum: max(8, samples / 4), budget: config.timeBudget) { solver, i -> [[Double]] in
             var u = [[Double]](repeating: [0, 0], count: 4)
@@ -313,8 +321,8 @@ public struct Bot: Sendable {
         var named = [Int](repeating: 0, count: n)
         for i in 0..<n {
             let h = worlds[i].hands[opp]
-            weight[i] = BidModel.likelihood(bids: v.bids, seat: opp, hand6: h, open: v.openCard,
-                                            dealer: v.dealer, players: 2)
+            weight[i] = net != nil ? 1 : BidModel.likelihood(bids: v.bids, seat: opp, hand6: h, open: v.openCard,
+                                                             dealer: v.dealer, players: 2)
             takes[i] = BidModel.probability(h, trump: open, open: v.openCard, round: 1, leadsFirst: oppFirst,
                                             weights: model)
             var pass = 1.0, top = -1.0
@@ -428,9 +436,7 @@ public struct Bot: Sendable {
     func evaluateBid(_ v: SeatView, trumps: [Suit], rng: inout SplitMix64) -> [Double] {
         let samples = max(1, config.biddingSamples)
         var totals = [Double](repeating: 0, count: trumps.count)
-        let worlds = config.inferInBidding && v.bids.contains(where: { $0.seat != v.seat })
-            ? WorldSampler.sampleBiddingInformed(v, count: samples, rng: &rng)
-            : (0..<samples).map { _ in WorldSampler.sampleBidding(v, rng: &rng) }
+        let worlds = biddingWorlds(v, count: samples, rng: &rng)
         if config.exactSolver && v.playerCount == 2 {
             // Каждый мир решается точно; миры считаются параллельно, сумма — в одном порядке.
             let perWorld = Bot.solveWorlds(worlds.count, minimum: max(8, samples / 4), budget: config.timeBudget) { solver, i in
@@ -446,6 +452,22 @@ public struct Bot: Sendable {
             }
         }
         return totals.map { $0 / Double(samples) }
+    }
+
+    /// Миры торговли: по «чутью» (если включено), по модели торговли соперников или просто случайные.
+    private func biddingWorlds(_ v: SeatView, count: Int, rng: inout SplitMix64) -> [(hands: [UInt32], prikup: [UInt32])] {
+        if config.belief > 0, let net = BeliefNet.shared {
+            let pool = (0..<(count * 3)).map { _ in WorldSampler.sampleBidding(v, rng: &rng) }
+            let logP = net.logProbabilities(v)
+            let unknown = BeliefFeatures.unknownMask(v)
+            let logs = pool.map { config.belief * WorldSampler.beliefLogWeight(v, logP: logP, unknown: unknown, hands: $0.hands) }
+            let top = logs.max() ?? 0
+            return WorldSampler.resample(pool, weights: logs.map { exp($0 - top) }, count: count, rng: &rng)
+        }
+        if config.inferInBidding && v.bids.contains(where: { $0.seat != v.seat }) {
+            return WorldSampler.sampleBiddingInformed(v, count: count, rng: &rng)
+        }
+        return (0..<count).map { _ in WorldSampler.sampleBidding(v, rng: &rng) }
     }
 
     /// Доигрывание сдачи по правилам в мире торговли, где козырь `trump` назначил `bidder`.
@@ -711,10 +733,27 @@ public struct Bot: Sendable {
     private func informedWorlds(_ v: SeatView, info: WorldSampler.PlayInfo, count: Int, trump: Suit, bidder: Int,
                                 rng: inout SplitMix64) -> [[UInt32]] {
         let beta = config.playInference
-        guard beta > 0, config.exactSolver, v.playerCount == 2,
-              (v.tricks + [v.currentTrick]).contains(where: { $0.plays.contains { $0.seat != v.seat } })
-        else { return WorldSampler.sampleInformed(v, info: info, count: count, rng: &rng) }
-        let candidates = WorldSampler.informedCandidates(v, info: info, trump: trump, count: count * 2, rng: &rng)
+        let readPlays = beta > 0 && config.exactSolver && v.playerCount == 2
+            && (v.tricks + [v.currentTrick]).contains(where: { $0.plays.contains { $0.seat != v.seat } })
+        let net = config.belief > 0 ? BeliefNet.shared : nil
+        guard readPlays || net != nil else { return WorldSampler.sampleInformed(v, info: info, count: count, rng: &rng) }
+        var candidates: (worlds: [[UInt32]], weights: [Double])
+        if let net {
+            // «Чутьё»: из вчетверо большего числа миров оставляем правдоподобные по сети (она уже
+            // учитывает торговлю, поэтому вес по модели торговли не нужен).
+            let pool = WorldSampler.informedCandidates(v, info: info, trump: trump, count: count * 4,
+                                                       biddingWeights: false, rng: &rng)
+            let logP = net.logProbabilities(v)
+            let unknown = BeliefFeatures.unknownMask(v)
+            let logs = pool.worlds.map { config.belief * WorldSampler.beliefLogWeight(v, logP: logP, unknown: unknown, hands: $0) }
+            let top = logs.max() ?? 0
+            let kept = WorldSampler.resample(pool.worlds, weights: logs.map { exp($0 - top) },
+                                             count: readPlays ? count * 2 : count, rng: &rng)
+            guard readPlays else { return kept }
+            candidates = (kept, [Double](repeating: 1, count: kept.count))
+        } else {
+            candidates = WorldSampler.informedCandidates(v, info: info, trump: trump, count: count * 2, rng: &rng)
+        }
         // На чтение — не больше трети предела; не успели — берём тех кандидатов, что успели оценить
         // (но не меньше четверти от нужного числа миров — остальные повторятся при перевыборе).
         let logs = Bot.solveWorlds(candidates.worlds.count, minimum: max(8, count / 4),

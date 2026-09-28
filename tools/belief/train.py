@@ -26,18 +26,48 @@ PHASE = 641              # четыре признака фазы: торгов�
 
 
 class Net(nn.Module):
-    def __init__(self, hidden):
+    def __init__(self, hidden, dropout=0.0):
         super().__init__()
         self.l1 = nn.Linear(FEATURES, hidden)
         self.l2 = nn.Linear(hidden, hidden)
         self.l3 = nn.Linear(hidden, CARDS * CLASSES)
+        self.drop = nn.Dropout(dropout)
 
     def forward(self, x):
-        h = F.relu(self.l1(x))
-        h = F.relu(self.l2(h))
+        h = self.drop(F.relu(self.l1(x)))
+        h = self.drop(F.relu(self.l2(h)))
         logits = self.l3(h).view(-1, CARDS, CLASSES)
         two = (x[:, THREE_PLAYERS] < 0.5).view(-1, 1)
         return logits.masked_fill(torch.stack([torch.zeros_like(two), two, torch.zeros_like(two)], -1).expand_as(logits), -1e4)
+
+
+def suit_permutations():
+    """Масти равноправны: перестановка мастей (вместе с козырем, заявками и «чистыми» мастями) даёт
+    такую же правильную позицию. Индексы: признак i новой позиции = признак perm[i] старой."""
+    import itertools
+    feats, labels = [], []
+    g = 32 * 20
+    for p in itertools.permutations(range(4)):
+        inv = [p.index(s) for s in range(4)]          # новая масть s была мастью inv[s]
+        card = [inv[c // 8] * 8 + c % 8 for c in range(CARDS)]
+        f = list(range(FEATURES))
+        for c in range(CARDS):
+            for k in range(20):
+                f[c * 20 + k] = card[c] * 20 + k
+        for base in (g + 5, g + 9):                      # козырь, масть открытой карты
+            for s_ in range(4):
+                f[base + s_] = base + inv[s_]
+        for r in range(3):                               # названная во 2-м круге масть
+            base = g + 19 + r * 8 + 2
+            for s_ in range(4):
+                f[base + s_] = base + inv[s_]
+        for r in range(2):                               # «чистые» масти следующего и следующего за ним
+            base = g + 53 + r * 4
+            for s_ in range(4):
+                f[base + s_] = base + inv[s_]
+        feats.append(f)
+        labels.append(card)
+    return torch.tensor(feats), torch.tensor(labels)
 
 
 def load(paths):
@@ -58,9 +88,15 @@ def split(parts, share):
     return np.concatenate(train), np.concatenate(val)
 
 
-def batch_loss(net, block, device):
-    x = block[:, :FEATURES].to(device, non_blocking=True).float() / 255
-    y = block[:, FEATURES:].to(device, non_blocking=True).long()
+def batch_loss(net, block, device, perms=None):
+    x = block[:, :FEATURES].to(device, non_blocking=True)
+    y = block[:, FEATURES:].to(device, non_blocking=True)
+    if perms is not None:
+        pick = torch.randint(0, len(perms[0]), (len(x),), device=device)
+        x = x.gather(1, perms[0][pick])
+        y = y.gather(1, perms[1][pick])
+    x = x.float() / 255
+    y = y.long()
     logits = net(x)
     mask = y != 255
     loss = F.cross_entropy(logits[mask], y[mask], reduction="sum")
@@ -84,16 +120,18 @@ def prior_loss(block):
     return float(-np.log(p[rows, y[mask]]).mean())
 
 
-def export(net, path):
+def export(net, path, half=True):
+    """BLF2: веса слоёв во float16 (вдвое меньше файл, точности хватает), сдвиги во float32.
+    BLF1 — всё во float32."""
     with open(path, "wb") as f:
-        f.write(b"BLF1")
+        f.write(b"BLF2" if half else b"BLF1")
         layers = [net.l1, net.l2, net.l3]
         f.write(struct.pack("<I", len(layers)))
         for layer in layers:
             w = layer.weight.detach().float().cpu().numpy()      # [выход][вход]
             b = layer.bias.detach().float().cpu().numpy()
             f.write(struct.pack("<II", w.shape[1], w.shape[0]))
-            f.write(w.astype("<f4").tobytes())
+            f.write(w.astype("<f2" if half else "<f4").tobytes())
             f.write(b.astype("<f4").tobytes())
 
 
@@ -106,6 +144,9 @@ def main():
     ap.add_argument("--batch", type=int, default=4096)
     ap.add_argument("--lr", type=float, default=2e-3)
     ap.add_argument("--val", type=float, default=0.03)
+    ap.add_argument("--dropout", type=float, default=0.0)
+    ap.add_argument("--wd", type=float, default=1e-4)
+    ap.add_argument("--augment", action="store_true", help="случайная перестановка мастей")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
@@ -122,23 +163,36 @@ def main():
             val_t = val_t.to(device)
         except RuntimeError:
             train_t = train_t.pin_memory()
-    net = Net(args.hidden).to(device)
-    opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
+    net = Net(args.hidden, args.dropout).to(device)
+    opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.wd)
     steps = args.epochs * math.ceil(len(train_t) / args.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=steps, pct_start=0.05)
     amp = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if device == "cuda" else torch.autocast(device_type="cpu", enabled=False)
 
-    def evaluate():
-        net.eval()
-        total, count = 0.0, 0
-        with torch.no_grad(), amp:
-            for i in range(0, len(val_t), 16384):
-                loss, n = batch_loss(net, val_t[i:i + 16384], device)
-                total += float(loss)
-                count += n
-        net.train()
-        return total / max(count, 1)
+    three_val = val_t[:, THREE_PLAYERS] > 127
+    play_val = val_t[:, PHASE + 3] > 127
+    groups = {"2p bid": ~three_val & ~play_val, "2p play": ~three_val & play_val,
+              "3p bid": three_val & ~play_val, "3p play": three_val & play_val}
 
+    def evaluate(detail=False):
+        net.eval()
+        result = {}
+        with torch.no_grad(), amp:
+            for name, rows in ([("all", None)] + list(groups.items()) if detail else [("all", None)]):
+                data = val_t if rows is None else val_t[rows]
+                total, count = 0.0, 0
+                for i in range(0, len(data), 16384):
+                    loss, n = batch_loss(net, data[i:i + 16384], device)
+                    total += float(loss)
+                    count += n
+                result[name] = total / max(count, 1)
+        net.train()
+        return result if detail else result["all"]
+
+    perms = None
+    if args.augment:
+        pf, pl = suit_permutations()
+        perms = (pf.to(device), pl.to(device))
     started = time.time()
     history = []
     for epoch in range(args.epochs):
@@ -147,19 +201,30 @@ def main():
         for i in range(0, len(order), args.batch):
             block = train_t[order[i:i + args.batch]]
             with amp:
-                loss, n = batch_loss(net, block, device)
+                loss, n = batch_loss(net, block, device, perms)
             opt.zero_grad(set_to_none=True)
             (loss / max(n, 1)).backward()
             opt.step()
             sched.step()
-            total += float(loss)
+            total += float(loss.detach())
             count += n
         v = evaluate()
         history.append({"epoch": epoch + 1, "train": total / count, "val": v, "seconds": round(time.time() - started)})
         print(f"epoch {epoch + 1}: train {total / count:.4f}  val {v:.4f}  ({time.time() - started:.0f} s)", flush=True)
         export(net, args.out)
+    detail = evaluate(detail=True)
+    priors = {}
+    val_np = val
+    for name, rows in groups.items():
+        sel = val_np[rows.cpu().numpy()]
+        if len(sel):
+            priors[name] = prior_loss(sel[:200_000])
+    for name, v in detail.items():
+        print(f"  val {name}: {v:.4f}" + (f"  (prior {priors[name]:.4f})" if name in priors else ""), flush=True)
+    torch.save(net.state_dict(), args.out + ".pt")
     with open(args.out + ".json", "w") as f:
-        json.dump({"features": FEATURES, "hidden": args.hidden, "records": len(train), "history": history}, f, indent=1)
+        json.dump({"features": FEATURES, "hidden": args.hidden, "records": len(train), "history": history,
+                   "val": detail, "prior": priors}, f, indent=1)
     print("saved", args.out)
 
 

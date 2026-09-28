@@ -13,7 +13,8 @@ let package = Package(
         .library(name: "DebercKit", targets: ["DebercKit"]),
     ],
     targets: [
-        .target(name: "DebercKit"),
+        // Веса сети «чутья» (tools/belief) — см. `BeliefNet`.
+        .target(name: "DebercKit", resources: [.copy("Resources/belief.bin")]),
         .testTarget(name: "DebercKitTests", dependencies: ["DebercKit"]),
     ]
 )

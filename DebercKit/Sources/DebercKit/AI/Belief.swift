@@ -129,3 +129,143 @@ public enum BeliefFeatures {
         return x
     }
 }
+
+// MARK: - Сеть
+
+/// Сеть «чутья»: несколько полносвязных слоёв с ReLU, веса — в ресурсе `belief.bin`
+/// (число слоёв, затем для каждого — входы, выходы, веса [выход][вход] и сдвиги; веса во float32
+/// у формата BLF1 и во float16 у BLF2, сдвиги — всегда float32). Файл пишет `tools/belief/train.py`.
+/// Считается на процессоре за доли миллисекунды: входы почти все нулевые, их пропускаем.
+final class BeliefNet: @unchecked Sendable {
+    private struct Layer {
+        let inputs: Int
+        let outputs: Int
+        /// Веса по входам: `weights[i * outputs + j]` — вклад входа `i` в выход `j`.
+        let weights: [Float]
+        let bias: [Float]
+    }
+
+    private let layers: [Layer]
+
+    /// Сеть из ресурсов пакета (nil — ресурса нет или он не читается).
+    static let shared: BeliefNet? = {
+        guard let url = Bundle.module.url(forResource: "belief", withExtension: "bin"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return BeliefNet(data: data)
+    }()
+
+    init?(data: Data) {
+        let bytes = [UInt8](data)
+        var offset = 0
+        func u32() -> Int? {
+            guard offset + 4 <= bytes.count else { return nil }
+            defer { offset += 4 }
+            return Int(bytes[offset]) | Int(bytes[offset + 1]) << 8 | Int(bytes[offset + 2]) << 16 | Int(bytes[offset + 3]) << 24
+        }
+        func floats(_ n: Int) -> [Float]? {
+            guard offset + 4 * n <= bytes.count else { return nil }
+            defer { offset += 4 * n }
+            return (0..<n).map { k in
+                let p = offset + 4 * k
+                let raw = UInt32(bytes[p]) | UInt32(bytes[p + 1]) << 8 | UInt32(bytes[p + 2]) << 16 | UInt32(bytes[p + 3]) << 24
+                return Float(bitPattern: raw)
+            }
+        }
+        func halves(_ n: Int) -> [Float]? {
+            guard offset + 2 * n <= bytes.count else { return nil }
+            defer { offset += 2 * n }
+            return (0..<n).map { k in BeliefNet.float(half: UInt16(bytes[offset + 2 * k]) | UInt16(bytes[offset + 2 * k + 1]) << 8) }
+        }
+        guard bytes.count >= 8 else { return nil }
+        let magic = Array(bytes[0..<4])
+        let half = magic == Array("BLF2".utf8)
+        guard half || magic == Array("BLF1".utf8) else { return nil }
+        offset = 4
+        guard let count = u32(), count > 0 else { return nil }
+        var layers: [Layer] = []
+        for _ in 0..<count {
+            guard let inputs = u32(), let outputs = u32(),
+                  let w = half ? halves(inputs * outputs) : floats(inputs * outputs), let b = floats(outputs) else { return nil }
+            var transposed = [Float](repeating: 0, count: inputs * outputs)
+            for j in 0..<outputs { for i in 0..<inputs { transposed[i * outputs + j] = w[j * inputs + i] } }
+            layers.append(Layer(inputs: inputs, outputs: outputs, weights: transposed, bias: b))
+        }
+        guard layers.first?.inputs == BeliefFeatures.count,
+              layers.last?.outputs == 32 * BeliefFeatures.classes, offset == bytes.count else { return nil }
+        self.layers = layers
+    }
+
+    /// float16 → float32 (IEEE 754), без `Float16`: он есть не на всех платформах.
+    static func float(half h: UInt16) -> Float {
+        let sign: UInt32 = UInt32(h >> 15) << 31
+        let exponent = Int((h >> 10) & 0x1F)
+        let fraction = UInt32(h & 0x3FF)
+        if exponent == 0 {
+            let value = Float(fraction) * Float(bitPattern: 0x3380_0000)   // 2^-24
+            return sign == 0 ? value : -value
+        }
+        if exponent == 31 { return Float(bitPattern: sign | 0x7F80_0000 | fraction << 13) }
+        return Float(bitPattern: sign | UInt32(exponent + 112) << 23 | fraction << 13)
+    }
+
+    /// Выход сети — «сырые» оценки: [карта × 3 класса].
+    func logits(_ features: [Float]) -> [Float] {
+        var input = features
+        for (k, layer) in layers.enumerated() {
+            var output = layer.bias
+            output.withUnsafeMutableBufferPointer { out in
+                layer.weights.withUnsafeBufferPointer { w in
+                    input.withUnsafeBufferPointer { x in
+                        for i in 0..<layer.inputs {
+                            let xi = x[i]
+                            if xi == 0 { continue }
+                            let row = i * layer.outputs
+                            for j in 0..<layer.outputs { out[j] += xi * w[row + j] }
+                        }
+                    }
+                }
+            }
+            if k < layers.count - 1 {
+                for j in output.indices where output[j] < 0 { output[j] = 0 }
+            }
+            input = output
+        }
+        return input
+    }
+
+    /// Логарифмы вероятностей, где сейчас каждая карта: `[карта * 3 + класс]`, класс 0 — у следующего
+    /// по кругу, 1 — у следующего за ним, 2 — ни у кого. Вдвоём класс 1 невозможен (−∞).
+    func logProbabilities(_ v: SeatView) -> [Float] {
+        let z = logits(BeliefFeatures.encode(v))
+        var result = [Float](repeating: 0, count: 32 * 3)
+        let three = v.playerCount == 3
+        for c in 0..<32 {
+            let a = z[c * 3], b = three ? z[c * 3 + 1] : -Float.infinity, n = z[c * 3 + 2]
+            let top = max(a, b, n)
+            let log = top + Foundation.log(exp(a - top) + exp(b - top) + exp(n - top))
+            result[c * 3] = a - log
+            result[c * 3 + 1] = b - log
+            result[c * 3 + 2] = n - log
+        }
+        return result
+    }
+}
+
+extension WorldSampler {
+    /// Вес мира по «чутью»: сумма логарифмов вероятностей того, где в этом мире лежит каждая
+    /// невидимая карта (`hands` — у кого что сейчас; остальные невидимые — ни у кого).
+    static func beliefLogWeight(_ v: SeatView, logP: [Float], unknown: UInt32, hands: [UInt32]) -> Double {
+        var total: Float = 0
+        var m = unknown
+        while m != 0 {
+            let c = m.trailingZeroBitCount
+            m &= m &- 1
+            var cls = 2
+            for s in 0..<v.playerCount where s != v.seat && hands[s] & (1 << UInt32(c)) != 0 {
+                cls = BeliefFeatures.rel(s, v) - 1
+            }
+            total += logP[c * 3 + cls]
+        }
+        return Double(total)
+    }
+}
