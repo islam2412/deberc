@@ -10,6 +10,7 @@
 import argparse
 import json
 import math
+import os
 import struct
 import time
 
@@ -23,6 +24,7 @@ CARDS = 32
 CLASSES = 3
 THREE_PLAYERS = 640      # номер признака «игра втроём»
 PHASE = 641              # четыре признака фазы: торговля 1, торговля 2, обмен, розыгрыш
+VAL_SHARE = 0.03
 
 
 class Net(nn.Module):
@@ -70,22 +72,30 @@ def suit_permutations():
     return torch.tensor(feats), torch.tensor(labels)
 
 
+RECORD = FEATURES + CARDS
+
+
 def load(paths):
-    parts = []
-    for p in paths:
-        raw = np.fromfile(p, dtype=np.uint8)
-        parts.append(raw[: len(raw) // (FEATURES + CARDS) * (FEATURES + CARDS)].reshape(-1, FEATURES + CARDS))
-    return parts
-
-
-def split(parts, share):
-    """Проверочная часть — хвост каждого файла: там другие партии, чем в начале."""
+    """Все файлы — в один массив без лишних копий (данных может быть больше половины памяти).
+    Проверочная часть — хвост каждого файла: там другие партии, чем в начале."""
+    sizes = [os.path.getsize(p) // RECORD for p in paths]
+    data = np.empty((sum(sizes), RECORD), dtype=np.uint8)
     train, val = [], []
-    for a in parts:
-        k = int(len(a) * (1 - share))
-        train.append(a[:k])
-        val.append(a[k:])
-    return np.concatenate(train), np.concatenate(val)
+    offset = 0
+    for p, n in zip(paths, sizes):
+        with open(p, "rb") as f:
+            view = memoryview(data[offset:offset + n]).cast("B")
+            done = 0
+            while done < len(view):
+                got = f.readinto(view[done:])
+                if not got:
+                    break
+                done += got
+        k = int(n * (1 - VAL_SHARE))
+        train.append(np.arange(offset, offset + k))
+        val.append(np.arange(offset + k, offset + n))
+        offset += n
+    return data, np.concatenate(train), np.concatenate(val)
 
 
 def batch_loss(net, block, device, perms=None):
@@ -143,32 +153,32 @@ def main():
     ap.add_argument("--hidden", type=int, default=512)
     ap.add_argument("--batch", type=int, default=4096)
     ap.add_argument("--lr", type=float, default=2e-3)
-    ap.add_argument("--val", type=float, default=0.03)
     ap.add_argument("--dropout", type=float, default=0.0)
     ap.add_argument("--wd", type=float, default=1e-4)
     ap.add_argument("--augment", action="store_true", help="случайная перестановка мастей")
+    ap.add_argument("--cpu-data", action="store_true", help="держать данные в памяти, а не в видеокарте")
     args = ap.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
-    parts = load(args.data)
-    train, val = split(parts, args.val)
-    print(f"device {device}; train {len(train):,} records, val {len(val):,}", flush=True)
-    print(f"prior (counts only) val loss: {prior_loss(val[:200_000]):.4f}", flush=True)
+    data, train_idx, val_idx = load(args.data)
+    print(f"device {device}; train {len(train_idx):,} records, val {len(val_idx):,}", flush=True)
+    print(f"prior (counts only) val loss: {prior_loss(data[val_idx[:200_000]]):.4f}", flush=True)
 
-    train_t = torch.from_numpy(train)
-    val_t = torch.from_numpy(val)
+    source = torch.from_numpy(data)          # общая с numpy память, без копии
     if device == "cuda":
-        try:
-            train_t = train_t.to(device)
-            val_t = val_t.to(device)
-        except RuntimeError:
-            train_t = train_t.pin_memory()
+        free, _ = torch.cuda.mem_get_info()
+        if not args.cpu_data and data.nbytes < free - 3 * 2**30:   # помещается в видеокарту с запасом
+            source = source.to(device)
+    train_t = torch.from_numpy(train_idx).to(source.device)
+    val_rows = torch.from_numpy(val_idx).to(source.device)
+    print(f"data on {source.device} ({data.nbytes / 2**30:.1f} GB)", flush=True)
     net = Net(args.hidden, args.dropout).to(device)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.wd)
-    steps = args.epochs * math.ceil(len(train_t) / args.batch)
+    steps = args.epochs * math.ceil(len(train_idx) / args.batch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=steps, pct_start=0.05)
     amp = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if device == "cuda" else torch.autocast(device_type="cpu", enabled=False)
 
+    val_t = source.index_select(0, val_rows)
     three_val = val_t[:, THREE_PLAYERS] > 127
     play_val = val_t[:, PHASE + 3] > 127
     groups = {"2p bid": ~three_val & ~play_val, "2p play": ~three_val & play_val,
@@ -196,10 +206,10 @@ def main():
     started = time.time()
     history = []
     for epoch in range(args.epochs):
-        order = torch.randperm(len(train_t), device=train_t.device)
+        order = train_t[torch.randperm(len(train_t), device=train_t.device)]
         total, count = 0.0, 0
         for i in range(0, len(order), args.batch):
-            block = train_t[order[i:i + args.batch]]
+            block = source.index_select(0, order[i:i + args.batch])
             with amp:
                 loss, n = batch_loss(net, block, device, perms)
             opt.zero_grad(set_to_none=True)
@@ -214,7 +224,7 @@ def main():
         export(net, args.out)
     detail = evaluate(detail=True)
     priors = {}
-    val_np = val
+    val_np = data[val_idx]
     for name, rows in groups.items():
         sel = val_np[rows.cpu().numpy()]
         if len(sel):
@@ -223,7 +233,7 @@ def main():
         print(f"  val {name}: {v:.4f}" + (f"  (prior {priors[name]:.4f})" if name in priors else ""), flush=True)
     torch.save(net.state_dict(), args.out + ".pt")
     with open(args.out + ".json", "w") as f:
-        json.dump({"features": FEATURES, "hidden": args.hidden, "records": len(train), "history": history,
+        json.dump({"features": FEATURES, "hidden": args.hidden, "records": len(train_idx), "history": history,
                    "val": detail, "prior": priors}, f, indent=1)
     print("saved", args.out)
 
