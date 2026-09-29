@@ -37,7 +37,8 @@ struct RootView: View {
         .animation(.easeInOut(duration: 0.3), value: store.isInGame)
         .animation(.easeInOut(duration: 0.4), value: showsMatchOver)
         .animation(.easeInOut(duration: 0.3), value: store.settings.hasSeenOnboarding)
-        .cardAppearance(fourColor: store.settings.fourColorDeck, largeIndex: store.settings.largeCards)
+        .cardAppearance(fourColor: store.settings.fourColorDeck, largeIndex: store.settings.largeCards,
+                        back: store.settings.cardBack)
         .environment(\.tableLargeControls, store.settings.largeCards)
     }
 }

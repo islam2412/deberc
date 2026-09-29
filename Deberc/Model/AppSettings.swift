@@ -64,6 +64,37 @@ enum GameSpeed: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Автоход: когда карта ходит сама, без касания.
+enum AutoPlay: String, Codable, CaseIterable, Identifiable {
+    /// Всегда ходить самому.
+    case off
+    /// Последняя карта сдачи ходит сама.
+    case lastCard
+    /// Сама ходит любая вынужденная карта — когда ходить можно только ею.
+    case onlyCard
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: return "Выключен"
+        case .lastCard: return "Последняя карта"
+        case .onlyCard: return "Любая вынужденная"
+        }
+    }
+
+    /// Карта, которой нужно сходить за человека (nil — ждать его хода).
+    /// `hand` — карты на руке, `legal` — которыми можно ходить сейчас.
+    func card(hand: [Card], legal: [Card]) -> Card? {
+        guard legal.count == 1, let only = legal.first else { return nil }
+        switch self {
+        case .off: return nil
+        case .lastCard: return hand.count == 1 ? only : nil
+        case .onlyCard: return only
+        }
+    }
+}
+
 /// Настройки игрока. Хранятся на устройстве; читаются терпимо: отсутствующие поля — по умолчанию,
 /// старые поля (`botLevel`, `botNames` из первых сборок) переводятся в новые.
 struct AppSettings: Codable, Equatable {
@@ -85,9 +116,15 @@ struct AppSettings: Codable, Equatable {
     var fourColorDeck = false
     /// Крупный режим: крупнее карты и подписи.
     var largeCards = false
+    /// Рубашка карт.
+    var cardBack = CardBackStyle.burgundy
     /// Показывать свои очки и взятки во время сдачи.
     var showLivePoints = true
+    /// Последняя (или любая вынужденная) карта ходит сама.
+    var autoPlay = AutoPlay.lastCard
     var hasSeenOnboarding = false
+    /// Подсказку про жесты (коснуться дважды или смахнуть карту вверх) уже показали.
+    var hasSeenPlayTip = false
 
     init() {}
 
@@ -134,7 +171,8 @@ struct AppSettings: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case rules, difficulty, opponentIDs, speed, playerName, confirmCardTap, playerCount
-        case soundEnabled, hapticsEnabled, fourColorDeck, largeCards, showLivePoints, hasSeenOnboarding
+        case soundEnabled, hapticsEnabled, fourColorDeck, largeCards, cardBack, showLivePoints, autoPlay
+        case hasSeenOnboarding, hasSeenPlayTip
     }
 
     /// Поля первых сборок.
@@ -175,7 +213,10 @@ struct AppSettings: Codable, Equatable {
         s.hapticsEnabled = value(Bool.self, .hapticsEnabled) ?? s.hapticsEnabled
         s.fourColorDeck = value(Bool.self, .fourColorDeck) ?? s.fourColorDeck
         s.largeCards = value(Bool.self, .largeCards) ?? s.largeCards
+        s.cardBack = value(CardBackStyle.self, .cardBack) ?? s.cardBack
         s.showLivePoints = value(Bool.self, .showLivePoints) ?? s.showLivePoints
+        s.autoPlay = value(AutoPlay.self, .autoPlay) ?? s.autoPlay
+        s.hasSeenPlayTip = value(Bool.self, .hasSeenPlayTip) ?? s.hasSeenPlayTip
         // Настройки уже были сохранены — значит, приложение открывали: приветствие не показываем.
         s.hasSeenOnboarding = value(Bool.self, .hasSeenOnboarding) ?? true
 

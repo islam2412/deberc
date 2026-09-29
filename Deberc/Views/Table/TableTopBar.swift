@@ -7,10 +7,14 @@ struct TableCommands {
     var showRules: () -> Void = {}
     var showSettings: () -> Void = {}
     var showLastTrick: () -> Void = {}
+    /// Карточка соперника на месте (характер, уровень, счёт против него).
+    var showPersona: (Int) -> Void = { _ in }
     var leave: () -> Void = {}
 }
 
-/// Верхняя полоса стола: меню, колода с открытой и нижней картой, цель партии, козырь.
+/// Верхняя полоса стола: меню и козырь; вдвоём между ними — соперник, под ним его карты и взятки.
+/// Колода лежит на столе у левого края, цель партии и висячие очки — вертикальной надписью
+/// у правого (`TableDecorations`).
 struct TableTopBar: View {
     @EnvironmentObject private var store: GameStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -18,76 +22,74 @@ struct TableTopBar: View {
     let deal: Deal
     let metrics: TableMetrics
     let commands: TableCommands
+    /// Соперник вдвоём (втроём соперники сидят строкой ниже).
+    var opponent: SeatInfo? = nil
+    var canShowLastTrick = false
 
     /// Только что назначили козырь — индикатор ненадолго вспыхивает.
     @State private var trumpFlash = false
 
     var body: some View {
+        Group {
+            if let opponent {
+                // Соперник — в одной полосе с меню и козырем (тесно — без звёзд уровня); иначе — строкой ниже.
+                ViewThatFits(in: .horizontal) {
+                    topRow(opponent, stars: true)
+                    topRow(opponent, stars: false)
+                    VStack(spacing: metrics.spacing) {
+                        barRow
+                        OpponentCluster(info: opponent, metrics: metrics, commands: commands,
+                                        canShowLastTrick: canShowLastTrick)
+                    }
+                }
+            } else {
+                barRow
+            }
+        }
+        .padding(.horizontal, metrics.gutter)
+        // Смена варианта раскладки (козырь стал шире, соперник переехал) — сразу, без затухания:
+        // иначе на миг видны пустые стеклянные рамки.
+        .transaction { $0.animation = nil }
+        .onChange(of: deal.trump) { trump in
+            guard trump != nil, !reduceMotion else { return }
+            trumpFlash = true
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_300_000_000)
+                trumpFlash = false
+            }
+        }
+    }
+
+    private func topRow(_ opponent: SeatInfo, stars: Bool) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            menuButton
+            Spacer(minLength: 0)
+            OpponentCluster(info: opponent, metrics: metrics, commands: commands,
+                            canShowLastTrick: canShowLastTrick, showsStars: stars)
+            Spacer(minLength: 0)
+            trumpBadge(detail: nil)
+        }
+    }
+
+    /// Меню — и козырь справа.
+    private var barRow: some View {
         HStack(spacing: 8) {
-            TableMenuButton(commands: commands, inSummary: false, size: menuSize)
-            deckSlot
+            menuButton
             Spacer(minLength: 4)
-            // Главное справа — козырь словом; цель партии и кто играет — если помещаются.
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    matchInfo
-                    trumpBadge(detail: trumpDetail)
-                }
-                HStack(spacing: 8) {
-                    matchInfo
-                    trumpBadge(detail: nil)
-                }
+                trumpBadge(detail: trumpDetail)
                 trumpBadge(detail: nil)
                 trumpBadge(detail: nil, compact: true)
             }
-            .scaleEffect(trumpFlash ? 1.1 : 1, anchor: .trailing)
-            .shadow(color: Theme.gold.opacity(trumpFlash ? 0.75 : 0), radius: trumpFlash ? 10 : 0)
         }
-        .padding(.horizontal, metrics.gutter)
         .frame(height: metrics.topBarHeight)
-        .onChange(of: deal.trump) { trump in
-            guard trump != nil, !reduceMotion else { return }
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.55)) { trumpFlash = true }
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 1_300_000_000)
-                withAnimation(.easeOut(duration: 0.45)) { trumpFlash = false }
-            }
-        }
     }
 
-    private var matchInfo: some View {
-        MatchInfoBadge(target: match.rules.targetScore, pot: match.pot,
-                       redeals: deal.forced ? 0 : match.allPassStreak,
-                       forcedAfter: match.rules.forcedDealAfterRedeals)
+    private var menuButton: some View {
+        TableMenuButton(commands: commands, inSummary: false, size: menuSize)
     }
 
     private var menuSize: CGFloat { metrics.roomy ? 50 : 44 }
-
-    /// Место для колоды: карты рисует слой карт, здесь — только рамка и подпись «низ».
-    private var deckSlot: some View {
-        let size = metrics.deckSlotSize
-        return HStack(spacing: 6) {
-            Color.clear
-                .frame(width: size.width, height: size.height)
-                .tableSlot(.deck)
-            if deal.bottomCardVisible, deal.bottomCard != nil {
-                // Подпись «низ» слой карт кладёт прямо на карту: рядом с ней места нет — оно нужно козырю справа.
-                Color.clear
-                    .frame(width: metrics.miniCardWidth, height: size.height)
-                    .tableSlot(.bottom)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(deckDescription)
-    }
-
-    private var deckDescription: String {
-        var parts = ["Открытая карта: \(CardView.spokenName(deal.openCard))"]
-        if deal.bottomCardVisible, let bottom = deal.bottomCard {
-            parts.append("нижняя карта: \(CardView.spokenName(bottom))")
-        }
-        return parts.joined(separator: ", ")
-    }
 
     private func trumpBadge(detail: String?, compact: Bool = false) -> some View {
         let round: Int?
@@ -100,12 +102,48 @@ struct TableTopBar: View {
         }
         return TrumpBadge(trump: deal.trump, detail: detail, biddingRound: round,
                           height: metrics.topBarHeight, compact: compact)
+            .scaleEffect(trumpFlash ? 1.1 : 1, anchor: .trailing)
+            .shadow(color: Theme.gold.opacity(trumpFlash ? 0.75 : 0), radius: trumpFlash ? 10 : 0)
+            .animation(trumpFlash ? .spring(response: 0.3, dampingFraction: 0.55) : .easeOut(duration: 0.45),
+                       value: trumpFlash)
+            .accessibilityValue(matchSpoken)
     }
 
     private var trumpDetail: String? {
         guard let bidder = deal.bidder else { return nil }
         let who = bidder == store.humanSeat ? "Вы играете" : "играет \(store.displayName(for: bidder))"
         return deal.forced ? "обязы · " + who : who
+    }
+
+    /// Цель партии и висячие очки — для VoiceOver (на экране — вертикальная надпись у края стола).
+    private var matchSpoken: String {
+        var text = "партия до \(match.rules.targetScore)"
+        if match.pot > 0 { text += ", висят \(match.pot) \(TableText.plural(match.pot, "очко", "очка", "очков"))" }
+        return text
+    }
+}
+
+/// Соперник вдвоём: плашка, под ней — его карты рубашкой и стопка взяток.
+struct OpponentCluster: View {
+    let info: SeatInfo
+    let metrics: TableMetrics
+    let commands: TableCommands
+    let canShowLastTrick: Bool
+    var showsStars = true
+
+    var body: some View {
+        VStack(spacing: 4) {
+            SeatPlate(info: info, avatarSize: metrics.avatarSize, maxWidth: metrics.roomy ? 320 : 230,
+                      showsStars: showsStars, onTap: { commands.showPersona(info.seat) })
+                .tableSlot(.seat(info.seat))
+            // Веер — ровно под плашкой, стопка взяток — справа от него (в ширину полосы не входит).
+            FanSlot(seat: info.seat, metrics: metrics)
+                .overlay(alignment: .trailing) {
+                    PileSlot(seat: info.seat, tricks: info.tricks, metrics: metrics,
+                             enabled: canShowLastTrick, onTap: commands.showLastTrick)
+                        .offset(x: metrics.pileSlotSize.width + 8)
+                }
+        }
     }
 }
 
@@ -176,6 +214,14 @@ struct TableMenuButton: View {
             Toggle(isOn: $store.settings.confirmCardTap) {
                 Label("Ход двойным касанием", systemImage: "hand.tap")
             }
+            Picker(selection: $store.settings.autoPlay) {
+                ForEach(AutoPlay.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            } label: {
+                Label("Автоход: \(store.settings.autoPlay.title.lowercased())", systemImage: "wand.and.stars")
+            }
+            .pickerStyle(.menu)
             Toggle(isOn: $store.settings.soundEnabled) {
                 Label("Звук", systemImage: "speaker.wave.2")
             }

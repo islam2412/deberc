@@ -186,6 +186,61 @@ struct SidePanel: View {
     }
 }
 
+/// Карточка соперника: портрет, имя, уровень и манера игры, ваш счёт против него. Закрывается касанием.
+struct PersonaPanel: View {
+    let persona: Persona
+    /// Партии против этого соперника (nil или 0 — ещё не играли).
+    let record: PlayerStats.Record?
+    let onClose: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onClose)
+                .accessibilityHidden(true)
+            VStack(spacing: 12) {
+                PersonaAvatarView(persona: persona, size: 96)
+                    .shadow(color: Color.black.opacity(0.35), radius: 8, x: 0, y: 4)
+                Text(persona.name)
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(Theme.tableText)
+                HStack(spacing: 8) {
+                    LevelStarsView(level: persona.level, size: 13)
+                    Text("\(persona.level.title) · \(persona.style.title)")
+                        .font(Theme.Typography.label)
+                        .foregroundStyle(Theme.tableSecondaryText)
+                }
+                Text(persona.bio)
+                    .font(.body)
+                    .foregroundStyle(Theme.tableText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(recordText)
+                    .font(Theme.Typography.label)
+                    .foregroundStyle(Theme.gold)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Закрыть", action: onClose)
+                    .buttonStyle(TableButtonStyle(prominent: true))
+                    .padding(.top, 4)
+            }
+            .padding(24)
+            .frame(maxWidth: 380)
+            .tableSurface(cornerRadius: 26)
+            .padding(24)
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private var recordText: String {
+        let with = persona.feminine ? "с ней" : "с ним"
+        guard let record, record.played > 0 else { return "Вы ещё не доигрывали партию \(with)" }
+        let games = RuPlural.count(record.played, "партия", "партии", "партий")
+        return "Ваши партии \(with): \(games), побед — \(record.won)"
+    }
+}
+
 /// Последняя взятка: карты с именами, кто зашёл и кто взял. Закрывается касанием.
 struct LastTrickPanel: View {
     let trick: Trick

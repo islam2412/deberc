@@ -200,6 +200,8 @@ struct BannerQueue: Equatable {
         var urgent: Bool
         /// Главное сообщение сдачи (козырь, обмен семёрки): держится полное время, даже если ждут другие.
         var important = false
+        /// Подсказка длиной в предложение — держится вдвое дольше.
+        var long = false
     }
 
     static let capacity = 4
@@ -225,13 +227,13 @@ struct BannerQueue: Equatable {
     }
 
     /// Срочное сообщение — первым. `current` — что на экране сейчас, `shownFor` — сколько секунд.
-    mutating func pushUrgent(_ text: String, current: Item?, shownFor: TimeInterval) {
+    mutating func pushUrgent(_ text: String, current: Item?, shownFor: TimeInterval, long: Bool = false) {
         items.removeAll { $0.text == text }
         if let current, !current.urgent, current.text != text, shownFor < 1.0 {
             items.removeAll { $0 == current }
             items.insert(current, at: 0)
         }
-        items.insert(Item(text: text, urgent: true), at: 0)
+        items.insert(Item(text: text, urgent: true, long: long), at: 0)
     }
 
     mutating func pop() -> Item? {
@@ -244,10 +246,23 @@ struct BannerQueue: Equatable {
 
     /// Сколько держать сообщение (вызывать после `pop()`: учитывает, ждут ли следующие).
     func hold(for item: Item, base: Duration) -> Duration {
+        if item.long { return max(.milliseconds(3500), base * 2) }
         if item.urgent { return max(.milliseconds(1600), base * 0.8) }
         if item.important { return base }
         return items.isEmpty ? base : max(.milliseconds(1100), base * 0.6)
     }
+}
+
+/// Крупное объявление в центре стола: назначен козырь, записаны комбинации.
+struct TableAnnouncement: Equatable, Identifiable {
+    enum Kind: Equatable {
+        case trump(seat: Int, suit: Suit, forced: Bool)
+        /// Комбинации, которые записывает `seat`; `senior` — у других тоже были, но младше.
+        case melds(seat: Int, melds: [Meld], points: Int, senior: Bool)
+    }
+
+    let id: Int
+    let kind: Kind
 }
 
 /// Мгновенная игра компьютеров за всех — для демо-экранов (итог сдачи, конец партии, запись).

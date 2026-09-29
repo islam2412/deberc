@@ -52,7 +52,7 @@ struct OnboardingView: View {
     private var hints: some View {
         VStack(alignment: .leading, spacing: 16) {
             HintRow(icon: "hand.tap",
-                    text: "Коснитесь карты — она приподнимется. Коснитесь ещё раз или смахните вверх — сходите.")
+                    text: "Коснитесь карты — она приподнимется, коснитесь ещё раз — сходите. Или просто бросьте карту пальцем вверх, к центру стола.")
             HintRow(icon: "line.3.horizontal.circle",
                     text: "В меню стола — запись партии, правила, подсказка, отмена хода и настройки.")
             HintRow(icon: "slider.horizontal.3",

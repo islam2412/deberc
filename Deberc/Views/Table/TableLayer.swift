@@ -16,6 +16,14 @@ struct TableLayerModel {
     var bannerUrgent: Bool
     /// Сдачу только что раздали (стол открылся на ней) — раздача видна с первого кадра.
     var freshDeal: Bool
+    /// Цель партии, висячие очки и пересдачи подряд — для вертикальной надписи у края стола.
+    var target = 0
+    var pot = 0
+    var redeals = 0
+    var forcedAfter = 0
+    /// Крупное объявление в центре стола (козырь).
+    var announcement: TableAnnouncement?
+    var humanSeat = 0
 
     func name(_ seat: Int) -> String {
         names.indices.contains(seat) ? names[seat] : ""
@@ -62,7 +70,9 @@ struct TableDecorations: View {
             trickNotes
             heroCaption
             bottomCardLabel
+            matchLabel
             bannerLayer
+            announcementLayer
         }
     }
 
@@ -159,7 +169,7 @@ struct TableDecorations: View {
         guard let displayed = scene.displayedTrick, let winner = displayed.winner,
               displayed.plays.contains(where: { $0.seat == winner }) else { return nil }
         let width = TrickGeometry.cardWidth(center: center, playerCount: scene.playerCount,
-                                            handCardWidth: scene.metrics.handCardWidth)
+                                            metrics: scene.metrics, deck: frames[.deck])
         let placed = TrickGeometry.point(relative: scene.relative(winner), playerCount: scene.playerCount,
                                          center: center, cardWidth: width)
         return CGPoint(x: placed.0.x, y: placed.0.y + width * CardView.aspectRatio * 0.3)
@@ -167,19 +177,81 @@ struct TableDecorations: View {
 
     // MARK: - Нижняя карта колоды
 
-    /// «низ» на нижней карте в верхней полосе — поверх карты, у её нижнего края.
+    /// «низ» на нижней карте колоды — поверх карты, у её нижнего края.
     @ViewBuilder
     private var bottomCardLabel: some View {
-        if let slot = frames[.bottom] {
-            let height = scene.metrics.miniCardWidth * CardView.aspectRatio
+        if deal.bottomCardVisible, deal.bottomCard != nil, let slot = frames[.deck] {
+            let w = scene.metrics.deckCardWidth
+            let point = DeckGeometry.bottomCenter(slot, cardWidth: w)
+            let height = DeckGeometry.bottomWidth(cardWidth: w) * CardView.aspectRatio
             Text("низ")
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 11, weight: .bold))
                 .foregroundStyle(Theme.onGold)
                 .fixedSize()
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
                 .background(Capsule().fill(Theme.gold))
-                .position(x: slot.midX, y: slot.midY + height / 2 - 2)
+                .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
+                .position(x: point.x, y: point.y + height / 2 - 4)
                 .accessibilityHidden(true)
+        }
+    }
+
+    // MARK: - Объявление
+
+    /// «Печать» назначенного козыря в центре стола: крупная масть, «Козырь — бубны», кто играет.
+    @ViewBuilder
+    private var announcementLayer: some View {
+        if let center = frames[.center] {
+            ZStack {
+                if let announcement = model.announcement {
+                    switch announcement.kind {
+                    case .trump(let seat, let suit, let forced):
+                        TrumpStamp(suit: suit,
+                                   title: (forced ? "Обязы — " : "Козырь — ") + suit.name,
+                                   subtitle: seat == model.humanSeat ? "играете вы" : "играет \(model.name(seat))")
+                            .id(announcement.id)
+                            .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
+                    case .melds(let seat, let melds, let points, let senior):
+                        MeldStamp(melds: melds, rules: model.rules,
+                                  owner: seat == model.humanSeat ? "у вас" : "у \(model.name(seat))",
+                                  points: points, senior: senior,
+                                  tileHeight: scene.metrics.roomy ? 56 : 44)
+                            .id(announcement.id)
+                            .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
+                    }
+                }
+            }
+            .position(x: center.midX, y: TrickGeometry.clusterCenter(center).y)
+            .allowsHitTesting(false)
+        }
+    }
+
+    // MARK: - Цель партии
+
+    /// «ДО 701 · ВИСЯТ 40» — вертикально у правого края стола, полупрозрачно, чтобы не спорить с картами;
+    /// висячие очки и пересдачи — золотом, ярче.
+    @ViewBuilder
+    private var matchLabel: some View {
+        if !scene.metrics.wide, model.target > 0, let center = frames[.center] {
+            HStack(spacing: 10) {
+                Text("до \(model.target)")
+                    .foregroundStyle(Theme.tableText.opacity(0.5))
+                if model.pot > 0 {
+                    Text("висят \(model.pot)")
+                        .foregroundStyle(Theme.gold.opacity(0.85))
+                } else if model.redeals > 0 && model.forcedAfter > 0 {
+                    Text("пересдач \(model.redeals)")
+                        .foregroundStyle(Theme.gold.opacity(0.85))
+                }
+            }
+            .font(.system(size: 15, weight: .heavy, design: .rounded))
+            .textCase(.uppercase)
+            .tracking(4)
+            .fixedSize()
+            .rotationEffect(.degrees(-90))
+            .position(x: center.maxX - 11, y: center.midY)
+            .accessibilityHidden(true)
         }
     }
 

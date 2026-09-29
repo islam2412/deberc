@@ -42,25 +42,6 @@ struct PileSlot: View {
     }
 }
 
-/// Соперник вдвоём: стопка взяток, плашка, веер — в ряд по центру.
-struct SeatRow: View {
-    let info: SeatInfo
-    let metrics: TableMetrics
-    let commands: TableCommands
-    let canShowLastTrick: Bool
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            PileSlot(seat: info.seat, tricks: info.tricks, metrics: metrics,
-                     enabled: canShowLastTrick, onTap: commands.showLastTrick)
-            SeatPlate(info: info, avatarSize: metrics.avatarSize, maxWidth: metrics.roomy ? 320 : 230)
-                .tableSlot(.seat(info.seat))
-            FanSlot(seat: info.seat, metrics: metrics)
-        }
-        .frame(maxWidth: .infinity)
-    }
-}
-
 /// Соперник втроём на узком экране: плашка, под ней веер и стопка.
 struct SeatStack: View {
     let info: SeatInfo
@@ -72,7 +53,8 @@ struct SeatStack: View {
 
     var body: some View {
         VStack(alignment: leading ? .leading : .trailing, spacing: metrics.spacing) {
-            SeatPlate(info: info, avatarSize: metrics.avatarSize, maxWidth: metrics.roomy ? 320 : 210)
+            SeatPlate(info: info, avatarSize: metrics.avatarSize, maxWidth: metrics.roomy ? 320 : 210,
+                      onTap: { commands.showPersona(info.seat) })
                 .tableSlot(.seat(info.seat))
             HStack(spacing: 8) {
                 if leading {
@@ -101,7 +83,8 @@ struct SeatColumn: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            SeatPlate(info: info, avatarSize: metrics.avatarSize, maxWidth: metrics.sideSeatWidth)
+            SeatPlate(info: info, avatarSize: metrics.avatarSize, maxWidth: metrics.sideSeatWidth,
+                      onTap: { commands.showPersona(info.seat) })
                 .tableSlot(.seat(info.seat))
             FanSlot(seat: info.seat, metrics: metrics)
             PileSlot(seat: info.seat, tricks: info.tricks, metrics: metrics,
@@ -151,6 +134,7 @@ struct HumanStrip: View {
         .frame(maxWidth: stripWidth)
         .padding(.horizontal, metrics.gutter)
         .frame(minHeight: metrics.roomy ? 50 : 40)
+        .transaction { $0.animation = nil }
     }
 
     private var tileHeight: CGFloat { metrics.roomy ? 30 : 24 }
@@ -172,20 +156,10 @@ struct HumanStrip: View {
             if showsProgress {
                 VStack(alignment: .leading, spacing: 3) {
                     ProgressTrack(fraction: info.progress, width: metrics.roomy ? 60 : 40)
-                    if let marks = info.marksText {
-                        Text(marks)
-                            .font(Theme.Typography.caption)
-                            .foregroundStyle(Theme.tableSecondaryText)
-                            .lineLimit(1)
-                            .fixedSize()
-                    }
+                    MarksLabel(info: info)
                 }
-            } else if let marks = info.marksText {
-                Text(marks)
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(Theme.tableSecondaryText)
-                    .lineLimit(1)
-                    .fixedSize()
+            } else {
+                MarksLabel(info: info)
             }
             if info.isDealer {
                 DealerTag(text: "сдаёте")

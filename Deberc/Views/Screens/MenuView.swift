@@ -395,6 +395,7 @@ struct MenuView: View {
         case "settings"?: sheet = .settings
         case "rules"?: sheet = .rules
         case "stats"?: sheet = .stats
+        case "opponents"?: sheet = .firstOpponent
         default: return
         }
         store.requestedScreen = nil

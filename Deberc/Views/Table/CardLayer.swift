@@ -50,6 +50,8 @@ struct TableScene: Equatable {
     var humanActive: Bool
     var reduceMotion: Bool
     var metrics: TableMetrics
+    /// Карта, которую тянут пальцем.
+    var drag: HandDrag? = nil
 
     var playerCount: Int { deal.playerCount }
 
@@ -117,7 +119,7 @@ enum CardSprites {
         var trickWidth: CGFloat {
             guard let center = frames[.center] else { return m.handCardWidth }
             return TrickGeometry.cardWidth(center: center, playerCount: scene.playerCount,
-                                           handCardWidth: m.handCardWidth)
+                                           metrics: m, deck: frames[.deck])
         }
 
         var heroWidth: CGFloat {
@@ -139,7 +141,7 @@ enum CardSprites {
                 return (HeroGeometry.stockPoint(center, cardWidth: w), w)
             }
             if let deck = frames[.deck] {
-                return (CGPoint(x: deck.minX + m.miniCardWidth, y: deck.midY), m.miniCardWidth)
+                return (DeckGeometry.stockCenter(deck, cardWidth: m.deckCardWidth), m.deckCardWidth)
             }
             return nil
         }
@@ -197,11 +199,13 @@ enum CardSprites {
                 }
                 add(sprite)
             } else if let deck = frames[.deck] {
-                let w = m.miniCardWidth
-                let openPoint = CGPoint(x: deck.minX + w / 2, y: deck.midY)
+                // Колода у левого края: рубашки лёжа, из-под них уголком выглядывает открытая карта.
+                let w = m.deckCardWidth
                 var sprite = CardSprite(id: "\(scene.dealKey).o\(open.id).d", card: open, width: w,
-                                        position: openPoint, z: 11)
+                                        position: DeckGeometry.openCenter(deck, cardWidth: w),
+                                        rotation: 90, z: 11)
                 sprite.isTrump = deal.trump == open.suit
+                sprite.showsBottomIndex = false
                 if !scene.reduceMotion, let center = frames[.center] {
                     // Переезжает из центра, где лежала во время торговли.
                     let hw = heroWidth
@@ -210,14 +214,14 @@ enum CardSprites {
                 }
                 add(sprite)
                 if !deal.stock.isEmpty {
-                    let stockPoint = CGPoint(x: deck.minX + w, y: deck.midY)
-                    for k in 0..<2 {
-                        let d = CGFloat(k) * 1.2
+                    let stockPoint = DeckGeometry.stockCenter(deck, cardWidth: w)
+                    for k in 0..<3 {
+                        let d = CGFloat(k) * 1.3
                         var sprite = CardSprite(id: "\(scene.dealKey).s\(k).d", card: nil, width: w,
-                                                position: CGPoint(x: stockPoint.x - d, y: stockPoint.y - d),
-                                                z: Double(12 + k))
+                                                position: CGPoint(x: stockPoint.x + d, y: stockPoint.y - d),
+                                                rotation: 90, z: Double(12 + k))
                         if !scene.reduceMotion, let center = frames[.center] {
-                            // После торговли колода переезжает из центра в верхнюю полосу.
+                            // После торговли колода переезжает из центра к краю стола.
                             let hw = heroWidth
                             sprite.origin = SpriteOrigin(position: HeroGeometry.stockPoint(center, cardWidth: hw),
                                                          rotation: -3, scale: hw / w, faceUp: true)
@@ -229,13 +233,16 @@ enum CardSprites {
         }
 
         mutating func addBottomCard() {
-            guard deal.bottomCardVisible, let bottom = deal.bottomCard, let slot = frames[.bottom] else { return }
-            let w = m.miniCardWidth
+            guard deal.bottomCardVisible, let bottom = deal.bottomCard, let slot = frames[.deck] else { return }
+            let w = DeckGeometry.bottomWidth(cardWidth: m.deckCardWidth)
             var sprite = CardSprite(id: "\(scene.dealKey).b\(bottom.id)", card: bottom, width: w,
-                                    position: CGPoint(x: slot.midX, y: slot.midY), z: 14)
+                                    position: DeckGeometry.bottomCenter(slot, cardWidth: m.deckCardWidth),
+                                    rotation: -4, z: 14)
             sprite.isTrump = deal.trump == bottom.suit
-            if !scene.reduceMotion, let deck = frames[.deck] {
-                sprite.origin = SpriteOrigin(position: CGPoint(x: deck.minX + w, y: deck.midY), faceUp: false)
+            if !scene.reduceMotion {
+                // Открывается на глазах: из колоды, переворачиваясь.
+                sprite.origin = SpriteOrigin(position: DeckGeometry.stockCenter(slot, cardWidth: m.deckCardWidth),
+                                             rotation: 90, faceUp: false)
             }
             add(sprite)
         }
@@ -263,10 +270,11 @@ enum CardSprites {
                 } else {
                     rise = lift
                 }
+                let arc = HandFan.arc(index: index, count: cards.count, cardWidth: hw)
                 var sprite = CardSprite(id: key(card, zone: "h"), card: card, width: render,
                                         position: CGPoint(x: frame.minX + centers[index],
-                                                          y: frame.minY + rise + cardHeight / 2),
-                                        scale: scale, z: Double(100 + index))
+                                                          y: frame.minY + rise + cardHeight / 2 + arc.dy),
+                                        rotation: arc.angle, scale: scale, z: Double(100 + index))
                 sprite.dimmed = scene.humanActive && !isLegal
                 sprite.playable = scene.humanActive && isLegal && !isSelected
                 sprite.highlighted = isSelected
@@ -274,6 +282,30 @@ enum CardSprites {
                 sprite.showsBottomIndex = index == cards.count - 1
                 sprite.origin = fromStock(width: render, hasFace: true)
                 sprite.delay = Double(index) * 0.05
+                if let drag = scene.drag, drag.card == card, drag.preview {
+                    // Карту рассматривают: крупно, ровно, над серединой руки.
+                    let big = min(hw * 1.8, render * 1.3)
+                    sprite.position = CGPoint(x: frame.midX, y: frame.minY - big * CardView.aspectRatio * 0.42)
+                    sprite.rotation = 0
+                    sprite.scale = big / render
+                    sprite.z = 700
+                    sprite.highlighted = false
+                    sprite.playable = false
+                    sprite.dimmed = false
+                    sprite.showsBottomIndex = true
+                } else if let drag = scene.drag, drag.card == card {
+                    // Карта в пальцах: над всеми, чуть крупнее, наклон — по движению руки.
+                    sprite.position.x += drag.translation.width
+                    sprite.position.y += drag.translation.height
+                    sprite.rotation = drag.playable
+                        ? max(-14, min(14, Double(drag.translation.width) * 0.08))
+                        : arc.angle
+                    sprite.scale = scale * (drag.playable ? 1.08 : 1)
+                    sprite.z = 600
+                    sprite.highlighted = drag.playable
+                    sprite.playable = false
+                    sprite.showsBottomIndex = true
+                }
                 add(sprite)
             }
         }

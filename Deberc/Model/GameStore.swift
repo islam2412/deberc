@@ -31,6 +31,8 @@ final class GameStore: ObservableObject {
     @Published private(set) var bubbles: [Int: String] = [:]
     /// Текущее всплывающее сообщение.
     @Published private(set) var banner: String?
+    /// Крупное объявление в центре стола (козырь назначен) — само гаснет через пару секунд.
+    @Published private(set) var announcement: TableAnnouncement?
     /// Сообщение срочное (ошибка хода, совет, бэла) — его можно выделить цветом.
     @Published private(set) var bannerIsUrgent = false
     /// Только что собранная взятка — лежит на столе, пока её не соберут.
@@ -81,6 +83,11 @@ final class GameStore: ObservableObject {
     private var bannerGeneration = 0
     private var bannerShownAt = Date.distantPast
     private var hintTask: Task<Void, Never>?
+    private var announcementTask: Task<Void, Never>?
+    private var announcementSerial = 0
+    /// Объявления, ждущие своей очереди, и когда очередь освободится.
+    private var announcementQueue: [(kind: TableAnnouncement.Kind, duration: Duration)] = []
+    private var announcementsBusyUntil = ContinuousClock.now
     private var hintToken = 0
     private var hintCache: (match: Match, action: Action)?
     private var idleTask: Task<Void, Never>?
@@ -145,6 +152,15 @@ final class GameStore: ObservableObject {
     /// Карты, которыми человек может сходить сейчас.
     var legalCards: Set<Card> {
         guard isHumanTurn, let deal = match?.deal, deal.phase == .playing else { return [] }
+        return Set(deal.legalCards(for: humanSeat))
+    }
+
+    /// Карты, которые можно бросить на стол прямо сейчас: в свой ход — допустимые;
+    /// взятка ещё лежит на столе, а заходить вам — любые (взятка соберётся сама).
+    var throwableCards: Set<Card> {
+        if isHumanTurn { return legalCards }
+        guard isInGame, !showDealSummary, displayedTrick != nil, let match, match.actor == humanSeat,
+              let deal = match.deal, deal.phase == .playing else { return [] }
         return Set(deal.legalCards(for: humanSeat))
     }
 
@@ -254,11 +270,12 @@ final class GameStore: ObservableObject {
     // MARK: - Действия человека
 
     /// Действие человека: торговля, обмен семёрки или ход картой.
-    func perform(_ action: Action) {
+    /// `byUser == false` — автоход: второе касание двойного тапа тут ни при чём.
+    func perform(_ action: Action, byUser: Bool = true) {
         guard isHumanTurn, var current = match else { return }
         // Второе касание двойного тапа попадает в новую кнопку на том же месте («Беру» → «Взять … за 7»)
         // или в карту после сбора взятки — такой «ход» отбрасываем.
-        guard !isRepeatTap else { return }
+        guard !byUser || !isRepeatTap else { return }
         let before = current
         do {
             let events = try current.apply(action)
@@ -306,6 +323,18 @@ final class GameStore: ObservableObject {
             sounds.haptic(.select)
             return
         }
+        perform(.play(card))
+    }
+
+    /// Лёгкий отклик: карту взяли рассмотреть.
+    func feelCardPreview() {
+        sounds.haptic(.select)
+    }
+
+    /// Бросок карты на стол (и действие VoiceOver «Сходить»): лежащая взятка сначала соберётся сама.
+    func throwCard(_ card: Card) {
+        if displayedTrick != nil { collectTrick() }
+        guard isHumanTurn, legalCards.contains(card) else { return }
         perform(.play(card))
     }
 
@@ -396,16 +425,60 @@ final class GameStore: ObservableObject {
     }
 
     /// Срочное сообщение (ошибка хода, совет) показывается сразу, не дожидаясь очереди.
-    func showBanner(_ text: String, urgent: Bool) {
+    /// `long` — подсказка в целое предложение: держится дольше.
+    func showBanner(_ text: String, urgent: Bool, long: Bool = false) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         if urgent {
             let current = banner.map { BannerQueue.Item(text: $0, urgent: bannerIsUrgent) }
-            bannerQueue.pushUrgent(text, current: current, shownFor: Date().timeIntervalSince(bannerShownAt))
+            bannerQueue.pushUrgent(text, current: current, shownFor: Date().timeIntervalSince(bannerShownAt),
+                                   long: long)
             pumpBanners()
         } else if bannerQueue.pushInfo(text, current: banner), bannerTask == nil {
             pumpBanners()
         }
+    }
+
+    /// Объявление в центре стола на `duration` — по очереди с остальными; компьютер ждёт, пока все
+    /// объявления не покажут (пауза игры время не съедает).
+    private func announce(_ kind: TableAnnouncement.Kind, for duration: Duration) {
+        let duration = unattended ? .milliseconds(400) : duration
+        let now = ContinuousClock.now
+        announcementsBusyUntil = max(announcementsBusyUntil, now) + duration + .milliseconds(250)
+        hold(announcementsBusyUntil - now)
+        announcementQueue.append((kind, duration))
+        guard announcementTask == nil else { return }
+        announcementTask = Task { [weak self] in
+            await self?.runAnnouncements()
+        }
+    }
+
+    private func runAnnouncements() async {
+        while !Task.isCancelled, !announcementQueue.isEmpty {
+            let next = announcementQueue.removeFirst()
+            announcementSerial &+= 1
+            let item = TableAnnouncement(id: announcementSerial, kind: next.kind)
+            withAnimation(animation(.spring(response: 0.42, dampingFraction: 0.7))) { announcement = item }
+            guard await visibleSleep(next.duration), announcement?.id == item.id else { break }
+            withAnimation(.easeOut(duration: 0.3)) { announcement = nil }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        announcementTask = nil
+    }
+
+    private func clearAnnouncement() {
+        announcementTask?.cancel()
+        announcementTask = nil
+        announcementQueue.removeAll()
+        announcementsBusyUntil = .now
+        announcement = nil
+    }
+
+    /// VoiceOver проговаривает событие, у которого вместо строки внизу — «печать» в центре.
+    private func speak(_ event: DealEvent, in match: Match) {
+        guard UIAccessibility.isVoiceOverRunning,
+              let text = Narrator.message(for: event, in: match, humanSeat: humanSeat) else { return }
+        UIAccessibility.post(notification: .announcement, argument: text)
     }
 
     /// Главное сообщение сдачи (козырь, обмен семёрки): в очереди, но держится полное время.
@@ -494,6 +567,14 @@ final class GameStore: ObservableObject {
                 thinkingSeat = nil
                 if lastStepWasBot { sounds.haptic(.turn) }
                 lastStepWasBot = false
+                if let card = autoMoveCard() {
+                    await autoMove(card)
+                    return
+                }
+                showPlayTipIfNeeded()
+                if options.scriptedHuman && options.isDemo {
+                    await scriptedHumanMove()
+                }
                 return
 
             case .botMove(let seat):
@@ -561,6 +642,47 @@ final class GameStore: ObservableObject {
         }
     }
 
+    // MARK: - Автоход
+
+    /// Карта, которая ходит за человека сама (настройка «Автоход»), — nil, если ждём его.
+    private func autoMoveCard() -> Card? {
+        guard !autoplay, isHumanTurn, let deal = match?.deal, deal.phase == .playing else { return nil }
+        return settings.autoPlay.card(hand: deal.hands[humanSeat], legal: deal.legalCards(for: humanSeat))
+    }
+
+    /// Автоход: карта приподнимается, чтобы было видно, чем ходим, и через мгновение уходит на стол.
+    /// Коснуться карты можно и раньше — тогда ход сделает касание.
+    private func autoMove(_ card: Card) async {
+        withAnimation(animation(.easeOut(duration: 0.2))) { selectedCard = card }
+        guard await visibleSleep(settings.speed.botDelay * 0.8) else { return }
+        guard !Task.isCancelled, autoMoveCard() == card else { return }
+        perform(.play(card), byUser: false)
+    }
+
+    /// `-DebercScriptedHuman`: за человека решает компьютер, но ходит теми же действиями, что и касания.
+    private func scriptedHumanMove() async {
+        guard let snapshot = match else { return }
+        guard await visibleSleep(options.humanDelay ?? .milliseconds(2500)) else { return }
+        guard !Task.isCancelled, isHumanTurn, match == snapshot else { return }
+        var local = SplitMix64(seed: rng.next())
+        let action = Bot(level: .expert).chooseAction(match: snapshot, seat: humanSeat, rng: &local)
+        if case .play(let card) = action {
+            withAnimation(animation(.easeOut(duration: 0.15))) { selectedCard = card }
+            guard await visibleSleep(.milliseconds(500)), isHumanTurn, match == snapshot else { return }
+        }
+        perform(action, byUser: false)
+    }
+
+    /// Первый свой ход в розыгрыше — одна подсказка, как ходить картой.
+    private func showPlayTipIfNeeded() {
+        guard !autoplay, !settings.hasSeenPlayTip, isHumanTurn, match?.deal?.phase == .playing else { return }
+        settings.hasSeenPlayTip = true
+        showBanner(settings.confirmCardTap
+                   ? "Чтобы сходить, коснитесь карты дважды или бросьте её пальцем вверх, к центру стола"
+                   : "Чтобы сходить, коснитесь карты или бросьте её пальцем вверх, к центру стола",
+                   urgent: true, long: true)
+    }
+
     private func commitBotMove(_ updated: Match, _ events: [DealEvent]) {
         thinkingSeat = nil
         withAnimation(animation(.easeInOut(duration: 0.3))) {
@@ -586,8 +708,13 @@ final class GameStore: ObservableObject {
         hold(.milliseconds(Int(settings.speed.cardFlight * 1000) + 150))
     }
 
+    /// Автоигра для проверки (CI): смотреть некому — паузы и объявления не нужны.
+    /// С `-DebercHumanDelay` (съёмка) всё как у человека.
+    private var unattended: Bool { autoplay && options.humanDelay == nil }
+
     /// Компьютер не ходит раньше чем через `pause` (если уже ждёт дольше — не сокращать).
     private func hold(_ pause: Duration) {
+        guard !unattended else { return }
         let until = ContinuousClock.now + pause
         if let current = holdUntil, current > until { return }
         holdUntil = until
@@ -644,7 +771,23 @@ final class GameStore: ObservableObject {
             switch event {
             case .bid(let bid):
                 bubbles[bid.seat] = phrase(for: bid)
-            case .trumpChosen, .sevenExchanged:
+            case .trumpChosen(let seat, let suit, let forced):
+                // Вместо строки внизу — крупная «печать» с мастью в центре стола.
+                announce(.trump(seat: seat, suit: suit, forced: forced), for: settings.speed.announcePause * 0.85)
+                speak(event, in: current)
+                continue
+            case .playStarted(let decl):
+                // Комбинации — «печатью» с самими картами: у кого и сколько записано.
+                if let winner = decl.meldWinner, decl.melds.indices.contains(winner), !decl.melds[winner].isEmpty {
+                    let others = decl.melds.enumerated().contains { $0.offset != winner && !$0.element.isEmpty }
+                    // Свои комбинации человек и так видит — их «печать» короче.
+                    announce(.melds(seat: winner, melds: decl.melds[winner],
+                                    points: decl.meldPoints(for: winner, rules: current.rules), senior: others),
+                             for: settings.speed.announcePause * (winner == humanSeat ? 0.7 : 0.9))
+                    speak(event, in: current)
+                    continue
+                }
+            case .sevenExchanged:
                 important = true
             case .prikupDealt:
                 sounds.play(.deal)
@@ -803,6 +946,7 @@ final class GameStore: ObservableObject {
         dealEndedLive = false
         lastStepWasBot = false
         holdUntil = nil
+        clearAnnouncement()
         bubbles = [:]
         displayedTrick = nil
         thinkingSeat = nil
@@ -829,6 +973,7 @@ final class GameStore: ObservableObject {
             selectedCard = nil
             hintAction = nil
             clearBanners()
+            clearAnnouncement()
             // Экран, который поставил паузу, уже закрыт.
             isOverlayPresented = false
         }
@@ -961,7 +1106,7 @@ final class GameStore: ObservableObject {
             Diagnostics.trace("start players=\(settings.playerCount) level=\(level.rawValue) seed=\(launchSeed) screen=\(options.screenName ?? "-")")
         }
         switch options.screen {
-        case .none, .table?:
+        case .none, .table?, .persona?:
             newGame()
         case .summary?:
             runDemo(.summary)
@@ -972,7 +1117,7 @@ final class GameStore: ObservableObject {
         case .stats?:
             runDemoStats()
             runDemo(.menu)
-        case .menu?, .settings?, .rules?, .onboarding?:
+        case .menu?, .settings?, .rules?, .onboarding?, .opponents?:
             runDemo(.menu)
         }
     }

@@ -263,6 +263,8 @@ struct ActionPanel: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // Строки меняются сразу, без анимации сдвига: иначе заголовок на миг наезжает на подпись.
+            .transaction { $0.animation = nil }
             if store.canUndo {
                 undoButton()
             }
@@ -272,16 +274,15 @@ struct ActionPanel: View {
 
     private var playSubtitle: String? {
         if store.selectedCard != nil && store.settings.confirmCardTap {
-            return "Коснитесь карты ещё раз или смахните её вверх"
+            return "Коснитесь ещё раз или бросьте её вверх"
         }
         if let lead = deal.currentTrick.plays.first, lead.seat != store.humanSeat {
             // Втроём на столе две карты — какая из них заход, видно не сразу.
             return "Заход: \(store.displayName(for: lead.seat)), " + TableText.short(lead.card)
         }
-        if store.settings.confirmCardTap {
-            return "Коснитесь карты, чтобы выбрать"
-        }
-        return nil
+        return store.settings.confirmCardTap
+            ? "Коснитесь или бросьте карту вверх"
+            : "Коснитесь карты — сразу ход"
     }
 
     private var hintButton: some View {
@@ -349,6 +350,7 @@ struct ActionPanel: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .transaction { $0.animation = nil }
             if store.canUndo {
                 undoButton()
             }

@@ -12,12 +12,15 @@ struct GameView: View {
     @State private var showSettings = false
     @State private var showLastTrick = false
     @State private var confirmLeave = false
+    /// Место соперника, чью карточку открыли.
+    @State private var personaSeat: Int?
 
     var body: some View {
         GeometryReader { geo in
-            content(size: geo.size)
+            content(size: geo.size, bottomInset: geo.safeAreaInsets.bottom)
         }
-        .cardAppearance(fourColor: store.settings.fourColorDeck, largeIndex: store.settings.largeCards)
+        .cardAppearance(fourColor: store.settings.fourColorDeck, largeIndex: store.settings.largeCards,
+                        back: store.settings.cardBack)
         .environment(\.tableLargeControls, store.settings.largeCards)
         // Рука лежит у нижнего края: жест «Домой» — только со второго смахивания.
         .defersSystemGestures(on: .bottom)
@@ -63,7 +66,7 @@ struct GameView: View {
     }
 
     private var overlayOpen: Bool {
-        showScoreSheet || showRules || showSettings || showLastTrick || confirmLeave
+        showScoreSheet || showRules || showSettings || showLastTrick || confirmLeave || personaSeat != nil
     }
 
     private var commands: TableCommands {
@@ -72,13 +75,15 @@ struct GameView: View {
             showRules: { showRules = true },
             showSettings: { showSettings = true },
             showLastTrick: { showLastTrick = true },
+            showPersona: { seat in personaSeat = seat },
             leave: { confirmLeave = true })
     }
 
     @ViewBuilder
-    private func content(size: CGSize) -> some View {
+    private func content(size: CGSize, bottomInset: CGFloat) -> some View {
         let players = store.match?.playerCount ?? store.settings.playerCount
-        let metrics = TableMetrics(size: size, playerCount: players, large: store.settings.largeCards)
+        let metrics = TableMetrics(size: size, playerCount: players, large: store.settings.largeCards,
+                                   bottomInset: bottomInset)
         ZStack {
             FeltBackground()
             if let match = store.match, let deal = match.deal {
@@ -107,9 +112,16 @@ struct GameView: View {
                     .transition(.opacity)
                     .zIndex(6)
             }
+            if let seat = personaSeat, let persona = store.persona(for: seat) {
+                PersonaPanel(persona: persona, record: store.stats.byPersona[persona.id],
+                             onClose: { personaSeat = nil })
+                    .transition(.opacity)
+                    .zIndex(7)
+            }
         }
         .animation(.easeInOut(duration: 0.25), value: store.showDealSummary)
         .animation(.easeInOut(duration: 0.2), value: showLastTrick)
+        .animation(.easeInOut(duration: 0.2), value: personaSeat)
         .dynamicTypeSize(TableMetrics.typeSize(system: systemTypeSize, size: size, large: store.settings.largeCards))
         .statusBarHidden(!metrics.roomy)
     }
@@ -135,11 +147,15 @@ struct GameView: View {
 
     /// `-DebercScreen scoresheet` (скриншоты CI): сразу открыть запись партии.
     private func openRequestedScreen() {
-        guard store.requestedScreen == "scoresheet" else { return }
+        guard let screen = store.requestedScreen, screen == "scoresheet" || screen == "persona" else { return }
         store.requestedScreen = nil
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 600_000_000)
-            showScoreSheet = true
+            if screen == "scoresheet" {
+                showScoreSheet = true
+            } else {
+                personaSeat = (store.humanSeat + 1) % (store.match?.playerCount ?? 2)
+            }
         }
     }
 }
@@ -156,6 +172,8 @@ struct TableScreen: View {
     let deal: Deal
     let metrics: TableMetrics
     let commands: TableCommands
+    /// Карта, которую тянут пальцем из руки.
+    @State private var drag: HandDrag?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -174,7 +192,10 @@ struct TableScreen: View {
 
     private var tableColumn: some View {
         VStack(spacing: metrics.spacing) {
-            TableTopBar(match: match, deal: deal, metrics: metrics, commands: commands)
+            // Вдвоём соперник — в верхней полосе, между меню и козырем.
+            TableTopBar(match: match, deal: deal, metrics: metrics, commands: commands,
+                        opponent: match.playerCount == 2 ? seatInfo(leftSeat) : nil,
+                        canShowLastTrick: store.lastTrick != nil)
             if metrics.sideSeats {
                 HStack(alignment: .top, spacing: 12) {
                     SeatColumn(info: seatInfo(leftSeat), metrics: metrics, commands: commands,
@@ -196,18 +217,17 @@ struct TableScreen: View {
             hand
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // На телефоне рука ложится до самого края экрана и уходит за него: карты крупнее.
+        .ignoresSafeArea(.container, edges: metrics.handVisible < 1 ? .bottom : [])
     }
 
     private var leftSeat: Int { (store.humanSeat + 1) % match.playerCount }
     private var rightSeat: Int { (store.humanSeat + 2) % match.playerCount }
 
+    /// Соперники втроём: слева и справа, под верхней полосой.
     @ViewBuilder
     private var opponentsRow: some View {
-        if match.playerCount == 2 {
-            SeatRow(info: seatInfo(leftSeat), metrics: metrics, commands: commands,
-                    canShowLastTrick: store.lastTrick != nil)
-                .padding(.horizontal, metrics.gutter)
-        } else {
+        if match.playerCount == 3 {
             HStack(alignment: .top, spacing: 12) {
                 SeatStack(info: seatInfo(leftSeat), metrics: metrics, commands: commands,
                           canShowLastTrick: store.lastTrick != nil, leading: true)
@@ -219,7 +239,8 @@ struct TableScreen: View {
         }
     }
 
-    /// Центр стола: взятка (касание собирает показанную взятку), во время торговли — открытая карта.
+    /// Центр стола: взятка (касание собирает показанную взятку), во время торговли — открытая карта;
+    /// у левого края — колода.
     private var centerSlot: some View {
         Color.clear
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -233,6 +254,22 @@ struct TableScreen: View {
             .accessibilityAction(named: "Собрать взятку") {
                 store.collectTrick()
             }
+            .overlay(alignment: .leading) {
+                let size = metrics.deckSlotSize
+                Color.clear
+                    .frame(width: size.width, height: size.height)
+                    .tableSlot(.deck)
+                    .accessibilityElement()
+                    .accessibilityLabel(deckDescription)
+            }
+    }
+
+    private var deckDescription: String {
+        var parts = ["Колода. Открытая карта: \(CardView.spokenName(deal.openCard))"]
+        if deal.bottomCardVisible, let bottom = deal.bottomCard {
+            parts.append("нижняя карта: \(CardView.spokenName(bottom))")
+        }
+        return parts.joined(separator: ", ")
     }
 
     private var hand: some View {
@@ -244,11 +281,13 @@ struct TableScreen: View {
                         trump: deal.trump,
                         isActive: isActive,
                         legal: store.legalCards,
-                        selected: store.selectedCard)
+                        selected: store.selectedCard,
+                        visibleHeight: metrics.handHeight - metrics.handLift,
+                        drag: $drag)
             .frame(maxWidth: maxWidth)
             .tableSlot(.hand)
             .padding(.horizontal, metrics.gutter)
-            .padding(.bottom, 4)
+            .padding(.bottom, metrics.handVisible < 1 ? 0 : 4)
     }
 
     // MARK: Сведения
@@ -341,6 +380,14 @@ struct TableScreen: View {
         return text
     }
 
+    /// `-DebercDragPreview`: в свой ход первая допустимая карта — «в пальцах» (для снимков).
+    private var previewDrag: HandDrag? {
+        guard LaunchOptions.current.dragPreview, store.isHumanTurn, deal.phase == .playing,
+              let card = deal.hands[store.humanSeat].sortedForDisplay(trump: deal.trump)
+                .first(where: { store.legalCards.contains($0) }) else { return nil }
+        return HandDrag(card: card, translation: CGSize(width: 36, height: -150), playable: true)
+    }
+
     private var layerModel: TableLayerModel {
         let scene = TableScene(
             deal: deal,
@@ -351,7 +398,8 @@ struct TableScreen: View {
             legal: store.legalCards,
             humanActive: store.isHumanTurn && deal.phase == .playing,
             reduceMotion: reduceMotion,
-            metrics: metrics)
+            metrics: metrics,
+            drag: drag ?? previewDrag)
         var declared: [Int: [DeclItem]] = [:]
         for seat in 0..<match.playerCount where seat != store.humanSeat {
             let items = declarations(seat)
@@ -366,7 +414,13 @@ struct TableScreen: View {
             rules: match.rules,
             banner: store.showDealSummary ? nil : store.banner,
             bannerUrgent: store.bannerIsUrgent,
-            freshDeal: !deal.prikupDealt && deal.tricks.isEmpty && !deal.isFinished && !reduceMotion)
+            freshDeal: !deal.prikupDealt && deal.tricks.isEmpty && !deal.isFinished && !reduceMotion,
+            target: match.rules.targetScore,
+            pot: match.pot,
+            redeals: deal.forced ? 0 : match.allPassStreak,
+            forcedAfter: match.rules.forcedDealAfterRedeals,
+            announcement: store.showDealSummary ? nil : store.announcement,
+            humanSeat: store.humanSeat)
     }
 }
 

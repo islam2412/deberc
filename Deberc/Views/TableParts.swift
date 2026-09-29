@@ -43,12 +43,17 @@ struct SeatInfo {
         return min(1, max(0, Double(score) / Double(target)))
     }
 
-    /// «Б·Б», «Г» — счётчики до штрафа.
-    var marksText: String? {
+    /// Счётчики до штрафа: «байт 2/3 · голый 1/3» — сколько уже есть из скольких до штрафа.
+    var marksText: String? { marks(short: false) }
+
+    /// То же коротко для тесного места: «Б 2/3 · Г 1/3».
+    var marksShort: String? { marks(short: true) }
+
+    private func marks(short: Bool) -> String? {
         var parts: [String] = []
-        if baitMarks > 0 { parts.append(Array(repeating: "Б", count: baitMarks).joined(separator: "·")) }
-        if nakedMarks > 0 { parts.append(Array(repeating: "Г", count: nakedMarks).joined(separator: "·")) }
-        return parts.isEmpty ? nil : parts.joined(separator: " ")
+        if baitMarks > 0 { parts.append("\(short ? "Б" : "байт") \(baitMarks)/\(rules.baitPenaltyEvery)") }
+        if nakedMarks > 0 { parts.append("\(short ? "Г" : "голый") \(nakedMarks)/\(rules.nakedPenaltyEvery)") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// Описание для VoiceOver.
@@ -196,6 +201,10 @@ struct SeatPlate: View {
     let info: SeatInfo
     let avatarSize: CGFloat
     var maxWidth: CGFloat = 220
+    /// Звёзды уровня рядом с именем (в тесной полосе их можно не показывать).
+    var showsStars = true
+    /// Касание плашки — карточка соперника.
+    var onTap: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 10) {
@@ -214,10 +223,15 @@ struct SeatPlate: View {
         .frame(maxWidth: maxWidth, alignment: .leading)
         .tableSurface(cornerRadius: 18, highlighted: info.isActive)
         .fixedSize(horizontal: false, vertical: true)
+        // Варианты строк (со звёздами и без, с полоской и без) сменяются сразу, без затухания.
+        .transaction { $0.animation = nil }
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .onTapGesture { onTap?() }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(info.name)
         .accessibilityValue(info.spokenValue)
         .accessibilityHint(personaHint)
+        .accessibilityAddTraits(onTap == nil ? [] : .isButton)
     }
 
     /// Характер соперника: уровень и манера игры.
@@ -230,7 +244,7 @@ struct SeatPlate: View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) {
                 nameText
-                if let level = info.persona?.level {
+                if showsStars, let level = info.persona?.level {
                     LevelStarsView(level: level, size: 9)
                 }
             }
@@ -275,12 +289,29 @@ struct SeatPlate: View {
 
     @ViewBuilder
     private var marks: some View {
-        if let marks = info.marksText {
-            Text(marks)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(Theme.tableSecondaryText)
-                .lineLimit(1)
+        MarksLabel(info: info)
+    }
+}
+
+/// Счётчики байтов и голых до штрафа: словами, а в тесноте — буквами.
+struct MarksLabel: View {
+    let info: SeatInfo
+
+    var body: some View {
+        if let long = info.marksText, let short = info.marksShort {
+            ViewThatFits(in: .horizontal) {
+                text(long)
+                text(short)
+            }
         }
+    }
+
+    private func text(_ value: String) -> some View {
+        Text(value)
+            .font(Theme.Typography.caption)
+            .foregroundStyle(ScreenStyle.negative)
+            .lineLimit(1)
+            .fixedSize()
     }
 }
 
@@ -473,6 +504,88 @@ private struct BubbleTail: Shape {
     }
 }
 
+/// «Печать» назначенного козыря: крупная масть в круге слоновой кости, под ней — «Козырь — бубны»
+/// и кто играет. Показывается в центре стола на пару секунд.
+struct TrumpStamp: View {
+    let suit: Suit
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            SuitBadge(suit: suit, size: 72)
+                .shadow(color: Theme.gold.opacity(0.65), radius: 14)
+            Text(title)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(Theme.tableText)
+            Text(subtitle)
+                .font(Theme.Typography.label)
+                .foregroundStyle(Theme.gold)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .padding(.horizontal, 26)
+        .padding(.vertical, 16)
+        .tableSurface(cornerRadius: 26, highlighted: true)
+        .shadow(color: Color.black.opacity(0.35), radius: 14, x: 0, y: 6)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// «Печать» записанных комбинаций: название («Терц», «Два терца», «Терц и полтинник»),
+/// сами карты, у кого и сколько очков.
+struct MeldStamp: View {
+    let melds: [Meld]
+    let rules: RuleSet
+    /// «у вас», «у Бориса».
+    let owner: String
+    let points: Int
+    /// У других тоже были комбинации, но младше.
+    let senior: Bool
+    let tileHeight: CGFloat
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text(title)
+                .font(.title3.weight(.bold))
+                .foregroundStyle(Theme.tableText)
+            HStack(spacing: 10) {
+                ForEach(Array(melds.enumerated()), id: \.offset) { _, meld in
+                    HStack(spacing: -tileHeight * 0.18) {
+                        ForEach(meld.cards, id: \.self) { card in
+                            MiniTile(card: card, height: tileHeight)
+                                .shadow(color: Color.black.opacity(0.25), radius: 2, x: 0, y: 1)
+                        }
+                    }
+                }
+            }
+            Text("\(owner) · +\(points)" + (senior ? " · старше" : ""))
+                .font(Theme.Typography.label)
+                .foregroundStyle(Theme.gold)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .tableSurface(cornerRadius: 26, highlighted: true)
+        .shadow(color: Color.black.opacity(0.35), radius: 14, x: 0, y: 6)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var title: String {
+        let names = melds.map { $0.name(rules) }
+        if names.count == 2, names[0] == names[1] {
+            switch names[0] {
+            case "терц": return "Два терца"
+            case "полтинник": return "Два полтинника"
+            default: break
+            }
+        }
+        let joined = names.joined(separator: " и ")
+        return joined.prefix(1).uppercased() + joined.dropFirst()
+    }
+}
+
 /// Всплывающее сообщение стола. Срочное (ошибка хода, совет, бэла) — с золотой каймой.
 struct BannerView: View {
     let text: String
@@ -589,44 +702,5 @@ struct TrumpBadge: View {
         case 0: return "Все спасовали, пересдача"
         default: return "Торговля, первый круг"
         }
-    }
-}
-
-/// Цель партии, висячие очки, пересдачи подряд.
-struct MatchInfoBadge: View {
-    let target: Int
-    let pot: Int
-    /// Сколько пересдач подряд (все спасовали) — после `forcedAfter` сдача на обязах.
-    let redeals: Int
-    let forcedAfter: Int
-
-    var body: some View {
-        VStack(spacing: 1) {
-            Text("до \(target)")
-                .font(Theme.Typography.caption)
-                .foregroundStyle(Theme.tableSecondaryText)
-            if pot > 0 {
-                Text("висят \(pot)")
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(Theme.gold)
-            } else if redeals > 0 && forcedAfter > 0 {
-                Text("пересдач: \(redeals)")
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(Theme.gold)
-            }
-        }
-        .lineLimit(1)
-        .fixedSize()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spoken)
-    }
-
-    private var spoken: String {
-        var text = "Партия до \(target)"
-        if pot > 0 { text += ", висят \(pot) \(TableText.plural(pot, "очко", "очка", "очков"))" }
-        if redeals > 0 && forcedAfter > 0 {
-            text += ", пересдач подряд: \(redeals), после \(forcedAfter) — обязы"
-        }
-        return text
     }
 }

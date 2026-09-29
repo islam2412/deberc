@@ -19,10 +19,8 @@ enum TableSlot: Hashable {
     case fan(Int)
     /// Стопка взяток игрока.
     case pile(Int)
-    /// Колода и открытая карта в верхней полосе (во время розыгрыша).
+    /// Колода у левого края стола: рубашки, под ними — открытая карта, ниже — нижняя карта.
     case deck
-    /// Нижняя карта колоды.
-    case bottom
 }
 
 struct TableSlotKey: PreferenceKey {
@@ -59,10 +57,15 @@ struct TableMetrics: Equatable {
     let handCardWidth: CGFloat
     let fanCardWidth: CGFloat
     let pileCardWidth: CGFloat
-    let miniCardWidth: CGFloat
+    /// Карты колоды на столе (лёжа, у левого края).
+    let deckCardWidth: CGFloat
     let avatarSize: CGFloat
+    /// Какая доля высоты карт руки видна: на телефоне рука уходит за нижний край экрана —
+    /// видны уголки с индексами и верх картинки, зато сами карты крупнее.
+    let handVisible: CGFloat
 
-    init(size: CGSize, playerCount: Int, large: Bool) {
+    /// `bottomInset` — нижний отступ безопасной зоны: на телефоне рука ложится до самого края экрана.
+    init(size: CGSize, playerCount: Int, large: Bool, bottomInset: CGFloat = 0) {
         let width = max(size.width, 1)
         let height = max(size.height, 1)
         let roomy = width >= 600 && height >= 640
@@ -78,42 +81,61 @@ struct TableMetrics: Equatable {
         sideSeatWidth = sideSeats ? min(240, (tableWidth * 0.22).rounded()) : 0
         topBarHeight = roomy ? (large ? 72 : 62) : (large ? 60 : 50)
         avatarSize = roomy ? (large ? 64 : 56) : (large ? 48 : 42)
-        miniCardWidth = roomy ? (large ? 46 : 40) : min(large ? 34 : 30, (width * 0.08).rounded())
+        deckCardWidth = roomy ? (large ? 66 : 60) : (large ? 58 : 52)
+        handVisible = roomy ? 1 : 0.72
 
-        // Карта руки: 9 карт внахлёст по ширине и место под взятку по высоте.
-        let byWidth = (tableWidth - 2 * gutter) / 4.6
-        let plate: CGFloat = roomy ? 84 : 66
-        let opponents: CGFloat
-        if sideSeats {
-            opponents = 0
-        } else if playerCount == 3 {
-            opponents = plate + spacing + (roomy ? 64 : 44)
+        let hand: CGFloat
+        if roomy {
+            // iPad: 9 карт внахлёст по ширине и место под взятку по высоте.
+            let byWidth = (tableWidth - 2 * gutter) / 4.6
+            let plate: CGFloat = 84
+            let opponents: CGFloat
+            if sideSeats {
+                opponents = 0
+            } else if playerCount == 3 {
+                opponents = plate + spacing + 64
+            } else {
+                opponents = 64
+            }
+            let chrome = topBarHeight + opponents + 50 + 70 + 5 * spacing + (large ? 30 : 0)
+            let byHeight = (height - chrome) / 4.6
+            hand = max(44, min(large ? 180 : 165, byWidth, byHeight)).rounded()
         } else {
-            opponents = plate
+            // Телефон: карты крупные — 9 карт внахлёст так, что видны уголки с индексами
+            // (у крупных индексов уголок шире), а над рукой — место под взятку того же размера.
+            let byWidth = (tableWidth - 2 * gutter) / (large ? 3.56 : 3.3)
+            let plate: CGFloat = large ? 66 : 58
+            let fanRow: CGFloat = 46
+            let top = playerCount == 3
+                ? topBarHeight + spacing + plate + spacing + fanRow
+                : max(topBarHeight, plate) + 4 + fanRow
+            let chrome = top + 40 + (large ? 64 : 52) + 4 * spacing
+            // Рука занимает видимую часть карты и подъём; взятке над ней — не меньше 2,2 ширины карты.
+            let byHeight = (height + bottomInset - chrome - 44) / (0.72 * CardView.aspectRatio + 0.22 + 2.2)
+            hand = max(44, min(large ? 132 : 120, byWidth, byHeight)).rounded()
         }
-        let chrome = topBarHeight + opponents + (roomy ? 50 : 40) + (roomy ? 70 : 58) + 5 * spacing + (large ? 30 : 0)
-        let byHeight = (height - chrome) / 4.6
-        let limit: CGFloat = roomy ? (large ? 180 : 165) : (large ? 120 : 110)
-        let hand = max(44, min(limit, byWidth, byHeight)).rounded()
         handCardWidth = hand
-        fanCardWidth = min(roomy ? 54 : 34, max(22, (hand * 0.34).rounded()))
-        pileCardWidth = min(roomy ? 44 : 30, max(20, (hand * 0.28).rounded()))
+        fanCardWidth = roomy ? min(54, max(22, (hand * 0.34).rounded())) : min(30, max(22, (hand * 0.28).rounded()))
+        pileCardWidth = roomy ? min(44, max(20, (hand * 0.28).rounded())) : min(26, max(20, (hand * 0.24).rounded()))
     }
 
     var handLift: CGFloat { (handCardWidth * 0.22).rounded() }
-    /// Ширина, в которой рисуются карты руки и взятки (одна для всех мест, чтобы карта летела без скачков).
-    var renderCardWidth: CGFloat { min(180, (handCardWidth * 1.1).rounded()) }
+    /// Видимая высота руки: карта (без ушедшей за край части) и подъём выбранной.
+    var handHeight: CGFloat { (handCardWidth * CardView.aspectRatio * handVisible + handLift).rounded() }
+    /// Карты взятки бывают крупнее карт руки — во сколько раз самое большее.
+    var trickScale: CGFloat { roomy ? 1.1 : 1.3 }
+    /// Ширина, в которой рисуются карты руки и взятки (одна для всех мест, чтобы карта летела без скачков):
+    /// по самой крупной — картинка остаётся чёткой.
+    var renderCardWidth: CGFloat { min(200, (handCardWidth * trickScale).rounded()) }
     /// Ширина, в которой рисуется открытая карта в центре во время торговли.
-    var heroRenderWidth: CGFloat { min(180, (handCardWidth * 1.2).rounded()) }
+    var heroRenderWidth: CGFloat { min(200, (handCardWidth * max(1.2, trickScale)).rounded()) }
     var fanSlotSize: CGSize {
         CGSize(width: (fanCardWidth * 3.6).rounded(), height: (fanCardWidth * CardView.aspectRatio).rounded() + 4)
     }
     var pileSlotSize: CGSize {
         CGSize(width: (pileCardWidth * CardView.aspectRatio).rounded() + 12, height: pileCardWidth + 12)
     }
-    var deckSlotSize: CGSize {
-        CGSize(width: (miniCardWidth * 1.5).rounded(), height: (miniCardWidth * CardView.aspectRatio).rounded())
-    }
+    var deckSlotSize: CGSize { DeckGeometry.slotSize(cardWidth: deckCardWidth) }
     var actionMinHeight: CGFloat { roomy ? (large ? 72 : 62) : (large ? 64 : 52) }
 
     /// Размер текста за столом: на iPad крупнее, на iPhone — с потолком, чтобы стол не разъезжался;
@@ -145,7 +167,27 @@ struct TableMetrics: Equatable {
 
 // MARK: - Веер руки
 
+/// Карта, которую человек тянет пальцем из руки, чтобы бросить на стол.
+struct HandDrag: Equatable {
+    var card: Card
+    /// Смещение от места карты в руке.
+    var translation: CGSize
+    /// Этой картой можно ходить: она идёт за пальцем. Нельзя — лишь чуть поддаётся.
+    var playable: Bool
+    /// Долгое нажатие: карту рассматривают — крупно над рукой, ход не делается.
+    var preview = false
+}
+
 enum HandFan {
+    /// Лёгкий веер, как в руке у живого игрока: крайние карты чуть повёрнуты и опущены.
+    static func arc(index i: Int, count n: Int, cardWidth w: CGFloat) -> (angle: Double, dy: CGFloat) {
+        guard n > 1 else { return (0, 0) }
+        let mid = Double(n - 1) / 2
+        let t = (Double(i) - mid) / mid
+        let spread = min(8, 1.5 * mid)
+        return (t * spread, CGFloat(t * t) * w * 0.06)
+    }
+
     /// Центры карт веера по x (от левого края области). Между мастями — небольшой зазор,
     /// чтобы пики и трефы не сливались.
     static func centers(for cards: [Card], width: CGFloat, cardWidth w: CGFloat) -> [CGFloat] {
@@ -195,12 +237,19 @@ enum TrickGeometry {
     /// Верхняя полоса центра остаётся под реплики и комбинации соперников.
     static let topInset: CGFloat = 36
 
-    /// Ширина карты взятки: крупно, но так, чтобы вся взятка помещалась в центр.
-    static func cardWidth(center: CGRect, playerCount: Int, handCardWidth: CGFloat) -> CGFloat {
+    /// Ширина карты взятки: крупно, но так, чтобы вся взятка помещалась в центр
+    /// и не заходила на колоду у левого края (`deck` — её место).
+    static func cardWidth(center: CGRect, playerCount: Int, metrics: TableMetrics, deck: CGRect?) -> CGFloat {
         let h = max(40, center.height - topInset - 8)
         let byHeight = h / (CardView.aspectRatio * 1.75)
         let byWidth = (center.width - 16) / (playerCount == 3 ? 2.5 : 1.7)
-        return max(30, min(handCardWidth * 1.1, 180, byHeight, byWidth))
+        // Левая карта взятки: втроём — на 0,62 ширины левее центра, вдвоём (соперника) — на 0,28.
+        var byDeck = CGFloat.greatestFiniteMagnitude
+        if let deck {
+            let room = center.midX - (deck.maxX + 6)
+            byDeck = room / (playerCount == 3 ? 1.12 : 0.78)
+        }
+        return max(30, min(metrics.handCardWidth * metrics.trickScale, 200, byHeight, byWidth, byDeck))
     }
 
     /// Центр взятки.
@@ -230,6 +279,38 @@ enum TrickGeometry {
     }
 }
 
+// MARK: - Колода на столе
+
+/// Колода у левого края стола, как на живом столе: рубашки лёжа (частично за краем экрана),
+/// из-под них выглядывает открытая карта, ниже — нижняя карта колоды с подписью «низ».
+enum DeckGeometry {
+    /// Место под колоду: ширина лёжащей карты с выглядывающей открытой, высота — колода и нижняя карта.
+    static func slotSize(cardWidth w: CGFloat) -> CGSize {
+        let h = w * CardView.aspectRatio
+        return CGSize(width: (h * 1.1).rounded(), height: (w + 10 + h * 0.9).rounded())
+    }
+
+    /// Центр колоды (рубашки лёжа): почти половина — за левым краем.
+    static func stockCenter(_ slot: CGRect, cardWidth w: CGFloat) -> CGPoint {
+        let h = w * CardView.aspectRatio
+        return CGPoint(x: slot.minX + h * 0.08, y: slot.minY + w / 2)
+    }
+
+    /// Открытая карта — под колодой, выглядывает вправо уголком с индексом.
+    static func openCenter(_ slot: CGRect, cardWidth w: CGFloat) -> CGPoint {
+        let stock = stockCenter(slot, cardWidth: w)
+        return CGPoint(x: stock.x + w * CardView.aspectRatio * 0.52, y: stock.y + 2)
+    }
+
+    /// Нижняя карта — стоя, под колодой, чуть мельче.
+    static func bottomCenter(_ slot: CGRect, cardWidth w: CGFloat) -> CGPoint {
+        let small = w * 0.9
+        return CGPoint(x: slot.minX + small / 2 + 6, y: slot.minY + w + 10 + small * CardView.aspectRatio / 2)
+    }
+
+    static func bottomWidth(cardWidth w: CGFloat) -> CGFloat { w * 0.9 }
+}
+
 // MARK: - Открытая карта во время торговли
 
 enum HeroGeometry {
@@ -239,7 +320,7 @@ enum HeroGeometry {
     static func cardWidth(center: CGRect, handCardWidth: CGFloat) -> CGFloat {
         let byHeight = (center.height - TrickGeometry.topInset - captionSpace) / (CardView.aspectRatio * 1.04)
         let byWidth = (center.width - 32) / 1.8
-        return max(34, min(handCardWidth * 1.2, 180, byHeight, byWidth))
+        return max(34, min(handCardWidth * 1.3, 200, byHeight, byWidth))
     }
 
     /// Центр пары «колода + открытая карта».

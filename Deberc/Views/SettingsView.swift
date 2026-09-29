@@ -38,7 +38,16 @@ struct SettingsView: View {
                 SettingLabel(title: "Скорость игры", detail: "Как быстро ходят соперники и сколько лежит взятка")
             }
             Toggle(isOn: $store.settings.confirmCardTap) {
-                SettingLabel(title: "Ход в два касания", detail: "Первое касание приподнимает карту, второе — ходит")
+                SettingLabel(title: "Ход в два касания",
+                             detail: "Первое касание приподнимает карту, второе — ходит. Бросить карту вверх — ход сразу")
+            }
+            Picker(selection: $store.settings.autoPlay) {
+                ForEach(AutoPlay.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            } label: {
+                SettingLabel(title: "Автоход",
+                             detail: "Когда ходить можно только одной картой, она ходит сама — в конце сдачи или всегда")
             }
             Toggle(isOn: $store.settings.showLivePoints) {
                 SettingLabel(title: "Мои очки во время сдачи", detail: "Сколько взяток и очков у вас уже есть")
@@ -56,6 +65,15 @@ struct SettingsView: View {
             Toggle(isOn: $store.settings.largeCards) {
                 SettingLabel(title: "Крупный режим", detail: "Крупнее карты, подписи и кнопки")
             }
+            VStack(alignment: .leading, spacing: 10) {
+                SettingLabel(title: "Рубашка карт")
+                HStack(spacing: 14) {
+                    ForEach(CardBackStyle.allCases) { style in
+                        backChoice(style)
+                    }
+                }
+            }
+            .padding(.vertical, 4)
             Toggle(isOn: $store.settings.fourColorDeck) {
                 // Масти — под подписью, а не справа от неё: иначе «Четырёхцветная» переносится по слогам.
                 VStack(alignment: .leading, spacing: 6) {
@@ -72,6 +90,30 @@ struct SettingsView: View {
             Text("Вид").formHeaderStyle()
         }
         .screenRow()
+    }
+
+    /// Рубашка на выбор: сама карта рубашкой вверх и название; выбранная — в золотой рамке.
+    private func backChoice(_ style: CardBackStyle) -> some View {
+        let selected = store.settings.cardBack == style
+        return Button {
+            store.settings.cardBack = style
+        } label: {
+            VStack(spacing: 6) {
+                CardView(card: nil, width: 50)
+                    .cardAppearance(back: style)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Theme.gold, lineWidth: selected ? 3 : 0)
+                            .padding(-4))
+                Text(style.title)
+                    .font(.footnote.weight(selected ? .semibold : .regular))
+                    .foregroundStyle(selected ? Theme.gold : Theme.tableSecondaryText)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Рубашка: \(style.title)")
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     private var soundSection: some View {

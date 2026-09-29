@@ -7,12 +7,16 @@ import DebercKit
 ///     -DebercPlayers 2|3             число игроков
 ///     -DebercLevel novice|amateur|expert|master   уровень соперников (понимает и easy/medium/hard)
 ///     -DebercScreen <экран>          открыть экран: menu, table, settings, rules, scoresheet, stats,
-///                                    onboarding, summary (итог сдачи), gameover (конец партии)
+///                                    onboarding, summary (итог сдачи), gameover (конец партии),
+///                                    persona (карточка соперника), opponents (выбор соперника)
 ///     -DebercSeed N                  зерно случайности — чтобы прогон повторялся
 ///     -DebercLarge YES               крупный режим (крупные карты, подписи и кнопки)
 ///     -DebercSpeed slow|normal|fast  темп игры
 ///     -DebercZoom YES                показать приложение как на iPhone с «Увеличенным» видом экрана
 ///                                    (ширина 320 pt, растянутая на весь экран) — проверка тесной раскладки
+///     -DebercScriptedHuman YES       (с -DebercScreen table) за человека ходит компьютер — через те же
+///                                    действия, что и касания: видно автоход, отмену, панели хода
+///     -DebercDragPreview YES         в свой ход первая допустимая карта «в пальцах» (снимок броска)
 ///     -DebercHumanDelay MS           автоигра: за человека компьютер ходит не раньше чем через MS мс,
 ///                                    чтобы на снимках были видны кнопки хода
 ///
@@ -22,6 +26,8 @@ import DebercKit
 struct LaunchOptions: Equatable {
     enum Screen: String, CaseIterable {
         case menu, table, settings, rules, scoresheet, stats, onboarding, summary, gameover
+        /// Карточка соперника за столом и выбор соперника в меню.
+        case persona, opponents
     }
 
     var autoplay = false
@@ -35,6 +41,8 @@ struct LaunchOptions: Equatable {
     var speed: GameSpeed?
     var humanDelay: Duration?
     var zoomed = false
+    var dragPreview = false
+    var scriptedHuman = false
 
     var isDemo: Bool { autoplay || screenName != nil }
 
@@ -63,6 +71,8 @@ struct LaunchOptions: Equatable {
         }
         large = defaults.bool(forKey: "DebercLarge")
         zoomed = defaults.bool(forKey: "DebercZoom")
+        dragPreview = defaults.bool(forKey: "DebercDragPreview")
+        scriptedHuman = defaults.bool(forKey: "DebercScriptedHuman")
         let delay = defaults.integer(forKey: "DebercHumanDelay")
         if delay > 0 { humanDelay = .milliseconds(delay) }
         if let raw = defaults.string(forKey: "DebercSpeed") {
