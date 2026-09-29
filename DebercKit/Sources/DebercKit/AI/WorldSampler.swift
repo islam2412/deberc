@@ -154,7 +154,7 @@ enum WorldSampler {
     }
 
     /// Кандидаты для перевыбора: миры, согласованные с объявлениями, и их веса по торговле.
-    static func informedCandidates(_ v: SeatView, info: PlayInfo, trump: Suit, count: Int,
+    static func informedCandidates(_ v: SeatView, info: PlayInfo, trump: Suit, count: Int, biddingWeights: Bool = true,
                                    rng: inout SplitMix64) -> (worlds: [[UInt32]], weights: [Double]) {
         var worlds: [[UInt32]] = []
         var weights: [Double] = []
@@ -167,7 +167,7 @@ enum WorldSampler {
                 world = samplePlay(info, rng: &rng)
             }
             worlds.append(world)
-            weights.append(biddingWeight(v, info: info, world: world))
+            weights.append(biddingWeights ? biddingWeight(v, info: info, world: world) : 1)
         }
         return (worlds, weights)
     }
