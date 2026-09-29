@@ -64,37 +64,6 @@ enum GameSpeed: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// Автоход: когда карта ходит сама, без касания.
-enum AutoPlay: String, Codable, CaseIterable, Identifiable {
-    /// Всегда ходить самому.
-    case off
-    /// Последняя карта сдачи ходит сама.
-    case lastCard
-    /// Сама ходит любая вынужденная карта — когда ходить можно только ею.
-    case onlyCard
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .off: return "Выключен"
-        case .lastCard: return "Последняя карта"
-        case .onlyCard: return "Любая вынужденная"
-        }
-    }
-
-    /// Карта, которой нужно сходить за человека (nil — ждать его хода).
-    /// `hand` — карты на руке, `legal` — которыми можно ходить сейчас.
-    func card(hand: [Card], legal: [Card]) -> Card? {
-        guard legal.count == 1, let only = legal.first else { return nil }
-        switch self {
-        case .off: return nil
-        case .lastCard: return hand.count == 1 ? only : nil
-        case .onlyCard: return only
-        }
-    }
-}
-
 /// Настройки игрока. Хранятся на устройстве; читаются терпимо: отсутствующие поля — по умолчанию,
 /// старые поля (`botLevel`, `botNames` из первых сборок) переводятся в новые.
 struct AppSettings: Codable, Equatable {
