@@ -84,49 +84,4 @@ final class BeliefTests: XCTestCase {
         var r1 = SplitMix64(seed: 3), r2 = SplitMix64(seed: 3)
         XCTAssertEqual(bot.chooseAction(match: a, seat: 1, rng: &r1), bot.chooseAction(match: b, seat: 1, rng: &r2))
     }
-    /// Признаки позиции для оценки втроём: все карты на своих местах, значения от 0 до 1.
-    func testValueFeaturesDescribeTheFullDeal() throws {
-        let match = try midDeal(players: 3, seed: 21, actions: 20)
-        guard match.deal?.phase == .playing else { return }
-        for seat in 0..<3 {
-            let x = try XCTUnwrap(ValueFeatures.encode(match: match, perspective: seat))
-            XCTAssertEqual(x.count, ValueFeatures.count)
-            XCTAssertTrue(x.allSatisfy { $0 >= 0 && $0 <= 1 })
-            // Каждая карта на руках отмечена ровно у одного игрока, и у «меня» — мои карты.
-            var inHands = 0
-            for c in 0..<32 {
-                let owners = (0..<3).filter { x[c * ValueFeatures.perCard + $0] == 1 }
-                XCTAssertLessThanOrEqual(owners.count, 1)
-                inHands += owners.count
-            }
-            XCTAssertEqual(inHands, match.deal!.hands.map(\.count).reduce(0, +))
-            for card in match.deal!.hands[seat] { XCTAssertEqual(x[card.id * ValueFeatures.perCard], 1) }
-        }
-    }
-
-    /// Признаки заявки: своя шестёрка, открытая карта, круг; ответ — номер действия.
-    func testBidFeaturesAndLabels() throws {
-        var match = Match(playerCount: 2, names: ["A", "B"], rules: .house, seed: 4)
-        match.startNextDeal()
-        let actor = try XCTUnwrap(match.actor)
-        let v = SeatView(match: match, seat: actor)
-        let x = try XCTUnwrap(BidFeatures.encode(v))
-        XCTAssertEqual(x.count, BidFeatures.count)
-        XCTAssertEqual(x[0..<32].reduce(0, +), Float(v.myHand.count))
-        XCTAssertEqual(x[32 + v.openCard.id], 1)
-        XCTAssertEqual(BidFeatures.label(.pass), 0)
-        XCTAssertEqual(BidFeatures.label(.take), 1)
-        XCTAssertEqual(BidFeatures.label(.name(.hearts)), 2 + Suit.hearts.rawValue)
-        XCTAssertNil(BidFeatures.label(.exchangeSeven(true)))
-    }
-
-    /// Если веса сетей оценки и заявок есть в ресурсах — они той формы, что ждёт код.
-    func testOptionalNetworksLoadWhenPresent() {
-        if let url = Bundle.module.url(forResource: "value3", withExtension: "bin") {
-            XCTAssertNotNil(ValueNet.shared, "value3.bin есть, но не читается: \(url.lastPathComponent)")
-        }
-        if Bundle.module.url(forResource: "bidpolicy", withExtension: "bin") != nil {
-            XCTAssertNotNil(BidPolicyNet.shared)
-        }
-    }
 }

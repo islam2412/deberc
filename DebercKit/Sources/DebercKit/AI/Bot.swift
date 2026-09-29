@@ -8,7 +8,8 @@ import Foundation
 ///
 /// Розыгрыш: для каждой допустимой карты моделирует доигрывание сдачи в случайных
 /// мирах, согласованных с тем, что видно на столе; в конце сдачи — точный перебор
-/// (вдвоём — альфа-бета). Мастер вдобавок раздаёт миры с учётом торговли соперников,
+/// (вдвоём — альфа-бета). Мастер вдобавок выбирает миры, правдоподобные по «чутью» — сети,
+/// которая по торговле и ходам соперников оценивает, у кого какая карта (`BeliefNet`), —
 /// а вдвоём решает каждый мир точно от первой карты до последней (`TwoPlayerSolver`) —
 /// и в розыгрыше, и при оценке заявки.
 /// Новичок играет по простым правилам, забывает старые взятки и иногда ходит «на автомате».
@@ -78,14 +79,6 @@ public struct Bot: Sendable {
         /// «Чутьё» (`BeliefNet`): миры, в которых карты лежат так, как подсказывает сеть по торговле
         /// и ходам, вероятнее. Число — насколько доверять сети (0 — не использовать).
         public var belief: Double
-        /// Втроём оценивать ход сетью (`ValueNet`) вместо доигрывания сдачи по простым правилам.
-        public var valueNet: Bool
-        /// Втроём оценивать заявку той же сетью (с первого хода) вместо доигрывания.
-        public var valueBid: Bool
-        /// В торговле с ценой паса предсказывать ответ соперника сетью заявок (`BidPolicyNet`).
-        public var bidPolicy: Bool
-        /// С «чутьём» раскладывать карты прямо по вероятностям сети, а не отбирать из случайных миров.
-        public var beliefDirect: Bool
 
         public init(biddingSamples: Int, takeThreshold: Double, nameThreshold: Double,
                     feelShift: Double = 0, feelNoise: Double = 0, forcedAware: Bool, exchange: ExchangeMode,
@@ -93,8 +86,7 @@ public struct Bot: Sendable {
                     inferInBidding: Bool = false, memoryTricks: Int? = nil, slipPercent: Int = 0,
                     rolloutExact: Int = 0, tieMargin: Double = 0, timeBudget: Double? = nil,
                     exactSolver: Bool = false, playInference: Double = 0, auctionModel: Bool = false,
-                    belief: Double = 0, valueNet: Bool = false, valueBid: Bool = false, bidPolicy: Bool = false,
-                    beliefDirect: Bool = false) {
+                    belief: Double = 0) {
             self.biddingSamples = biddingSamples
             self.takeThreshold = takeThreshold
             self.nameThreshold = nameThreshold
@@ -116,10 +108,6 @@ public struct Bot: Sendable {
             self.playInference = playInference
             self.auctionModel = auctionModel
             self.belief = belief
-            self.valueNet = valueNet
-            self.valueBid = valueBid
-            self.bidPolicy = bidPolicy
-            self.beliefDirect = beliefDirect
         }
 
         /// Настройки уровня и стиля.
@@ -144,13 +132,12 @@ public struct Bot: Sendable {
                 c = Config(biddingSamples: 128, takeThreshold: 4, nameThreshold: -5,
                            forcedAware: true, exchange: .simulate,
                            playSamples: 160, exactTwoPlayers: 6, exactThreePlayers: 4, inferFromBidding: true,
-                           timeBudget: 0.9, exactSolver: true, playInference: 0.15, auctionModel: true)
+                           timeBudget: 0.9, exactSolver: true, auctionModel: true, belief: 1)
                 #if DEBUG
-                // Отладочная сборка в десятки раз медленнее: меньше миров и без чтения ходов,
-                // иначе Мастер думает над ходом десятки секунд.
+                // Отладочная сборка в десятки раз медленнее: меньше миров, иначе Мастер думает над ходом
+                // десятки секунд.
                 c.playSamples = 40
                 c.biddingSamples = 32
-                c.playInference = 0
                 #endif
             }
             c.takeThreshold += style.takeShift
@@ -332,30 +319,10 @@ public struct Bot: Sendable {
         let oppFirst = !iSpeakFirst
         var weight = [Double](repeating: 1, count: n), takes = weight, names = weight
         var named = [Int](repeating: 0, count: n)
-        let policy = config.bidPolicy ? BidPolicyNet.shared : nil
-        // Что будет сказано к моменту решения соперника: в 1-м круге — мой пас (если я говорю первым),
-        // во 2-м — пасы 1-го круга и мой пас во 2-м (если я говорю первым).
-        let myPass1 = Bid(seat: me, round: 1, kind: .pass, suit: nil)
-        let bids1 = round == 1 && iSpeakFirst ? v.bids + [myPass1] : v.bids
-        var bids2 = v.bids
-        if round == 1 {
-            bids2.append(myPass1)
-            if iSpeakFirst { bids2.append(Bid(seat: opp, round: 1, kind: .pass, suit: nil)) }
-        }
-        if iSpeakFirst { bids2.append(Bid(seat: me, round: 2, kind: .pass, suit: nil)) }
         for i in 0..<n {
             let h = worlds[i].hands[opp]
             weight[i] = net != nil ? 1 : BidModel.likelihood(bids: v.bids, seat: opp, hand6: h, open: v.openCard,
                                                              dealer: v.dealer, players: 2)
-            if let policy {
-                takes[i] = policy.probabilities(hand6: h, open: v.openCard, round: 1, seat: opp, dealer: v.dealer,
-                                                playerCount: 2, bids: bids1, forcedSeat: v.forcedSeatIfAllPass)[1]
-                let p2 = policy.probabilities(hand6: h, open: v.openCard, round: 2, seat: opp, dealer: v.dealer,
-                                              playerCount: 2, bids: bids2, forcedSeat: v.forcedSeatIfAllPass)
-                names[i] = 1 - p2[0]
-                named[i] = (0..<4).filter { $0 != open }.max { p2[2 + $0] < p2[2 + $1] } ?? 0
-                continue
-            }
             takes[i] = BidModel.probability(h, trump: open, open: v.openCard, round: 1, leadsFirst: oppFirst,
                                             weights: model)
             var pass = 1.0, top = -1.0
@@ -479,14 +446,9 @@ public struct Bot: Sendable {
             for values in perWorld { for i in values.indices { totals[i] += values[i] } }
             return totals.map { $0 / Double(perWorld.count) }
         }
-        let net = config.valueBid && v.playerCount == 3 && ValueFeatures.supports(v.rules) ? ValueNet.shared : nil
         for world in worlds {
             for (i, trump) in trumps.enumerated() {
-                if let net {
-                    totals[i] += valuedDeal(v, hands6: world.hands, prikup: world.prikup, trump: trump, bidder: v.seat, net: net)
-                } else {
-                    totals[i] += simulateDeal(v, hands6: world.hands, prikup: world.prikup, trump: trump, bidder: v.seat)
-                }
+                totals[i] += simulateDeal(v, hands6: world.hands, prikup: world.prikup, trump: trump, bidder: v.seat)
             }
         }
         return totals.map { $0 / Double(samples) }
@@ -553,22 +515,6 @@ public struct Bot: Sendable {
         for id in ids(in: deal.hands[0] | deal.hands[1]) { remaining += ctx.points[id] }
         return Bot.solvedUtility(ctx, me: v.seat, cardPoints: zeros, tricks: zeros, remainingPoints: remaining,
                                  bonus: bonus, diff: deal.firstLead == v.seat ? value : -value)
-    }
-
-    /// Втроём: итог сдачи по сети оценки позиции — с первого хода, после прикупа и обмена семёрки.
-    private func valuedDeal(_ v: SeatView, hands6: [UInt32], prikup: [UInt32], trump: Suit, bidder: Int,
-                            net: ValueNet) -> Double {
-        let deal = dealHands(v, hands6: hands6, prikup: prikup, trump: trump, bidder: bidder)
-        let n = v.playerCount
-        let order = v.leadOrder(bidder: bidder)
-        let decl = Combinations.declarations(hands: deal.hands.map { m in ids(in: m).map { Card(id: $0) } },
-                                             trump: trump, rules: v.rules, priority: order)
-        let ctx = SimContext(rules: v.rules, playerCount: n, trump: trump.rawValue, bidder: bidder, priority: order,
-                             declarations: decl, pot: v.pot, baitCounts: v.baitCounts, nakedCounts: v.nakedCounts)
-        let zeros = [Int](repeating: 0, count: n)
-        let state = SimState(hands: deal.hands, turn: deal.firstLead, cardPoints: zeros, tricks: zeros, played: deal.seen,
-                             tricksLeft: deal.hands[0].nonzeroBitCount, ctx: ctx)
-        return net.utility(state, ctx, me: v.seat)
     }
 
     /// Разыграть сдачу с начала по эвристике; полезность для `v.seat`.
@@ -711,7 +657,6 @@ public struct Bot: Sendable {
         }
         let alphaBeta = n == 2 && handSize <= config.exactTwoPlayers
         let maxN = n == 3 && handSize <= config.exactThreePlayers
-        let valueNet = config.valueNet && n == 3 && ValueFeatures.supports(v.rules) ? ValueNet.shared : nil
         let target = config.playSamples
         let minimum = max(4, target / 4)
         let started = DispatchTime.now().uptimeNanoseconds
@@ -739,8 +684,6 @@ public struct Bot: Sendable {
                     scores[i] += Search.alphaBeta(s, ctx, me: v.seat, alpha: -.infinity, beta: .infinity)
                 } else if maxN {
                     scores[i] += Search.maxN(s, ctx)[v.seat]
-                } else if let valueNet {
-                    scores[i] += valueNet.utility(s, ctx, me: v.seat)
                 } else {
                     scores[i] += finishRollout(s, ctx, me: v.seat)
                 }
@@ -795,25 +738,7 @@ public struct Bot: Sendable {
         let net = config.belief > 0 ? BeliefNet.shared : nil
         guard readPlays || net != nil else { return WorldSampler.sampleInformed(v, info: info, count: count, rng: &rng) }
         var candidates: (worlds: [[UInt32]], weights: [Double])
-        if let net, config.beliefDirect {
-            // «Чутьё»: каждая карта сразу кладётся туда, где она вероятнее по сети.
-            let logP = net.logProbabilities(v)
-            let target = readPlays ? count * 2 : count
-            var kept: [[UInt32]] = []
-            kept.reserveCapacity(target)
-            var attempts = 0
-            while kept.count < target && attempts < target * 20 {
-                attempts += 1
-                guard let world = WorldSampler.sampleFromBelief(info, v: v, logP: logP, tau: config.belief, rng: &rng)
-                else { continue }
-                if attempts > target * 10 || WorldSampler.consistentWithDeclarations(v, info: info, world: world, trump: trump) {
-                    kept.append(world)
-                }
-            }
-            while kept.count < target { kept.append(WorldSampler.samplePlay(info, rng: &rng)) }
-            guard readPlays else { return kept }
-            candidates = (kept, [Double](repeating: 1, count: kept.count))
-        } else if let net {
+        if let net {
             // «Чутьё»: из вчетверо большего числа миров оставляем правдоподобные по сети (она уже
             // учитывает торговлю, поэтому вес по модели торговли не нужен).
             let pool = WorldSampler.informedCandidates(v, info: info, trump: trump, count: count * 4,
