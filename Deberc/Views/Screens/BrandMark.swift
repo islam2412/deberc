@@ -7,7 +7,7 @@ struct BrandMark: View {
     var large = false
     /// Поменьше — для приветствия и невысоких экранов.
     var compact = false
-    /// Подзаголовок «по нашим правилам».
+    /// Подзаголовок «по домашним правилам».
     var showsTagline = true
 
     private var cardWidth: CGFloat {
@@ -24,7 +24,7 @@ struct BrandMark: View {
                 .shadow(color: Color.black.opacity(0.45), radius: 4, x: 0, y: 2)
                 .accessibilityAddTraits(.isHeader)
             if showsTagline {
-                Text("по нашим правилам")
+                Text(RulesText.housePhrase)
                     .font(.headline)
                     .foregroundStyle(Theme.gold)
             }

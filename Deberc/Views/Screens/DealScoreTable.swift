@@ -147,7 +147,7 @@ struct DealScoreTable: View {
                 Text(signed ? Narrator.signed(value) : Narrator.number(value))
                     .fontWeight(bold ? .bold : .regular)
                     .foregroundStyle(colored ? ScreenStyle.change(value) : Theme.tableText)
-                    .accessibilityLabel("\(seats.column(seat)): \(Narrator.number(value))")
+                    .accessibilityLabel("\(title), \(seats.column(seat)): \(signed ? Narrator.signed(value) : Narrator.number(value))")
             }
         }
     }
@@ -180,7 +180,7 @@ struct MatchProgressList: View {
                         .font(.headline.monospacedDigit())
                         .foregroundStyle(leading ? Theme.gold : Theme.tableText)
                         .gridColumnAlignment(.trailing)
-                    Text(remaining(total))
+                    Text(remaining(total, seat: seat))
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(Theme.tableSecondaryText)
                         .gridColumnAlignment(.trailing)
@@ -189,8 +189,11 @@ struct MatchProgressList: View {
         }
     }
 
-    private func remaining(_ total: Int) -> String {
+    /// Сколько осталось до цели партии, а у дошедшего до неё — «дошли» (вы), «дошёл» или «дошла».
+    private func remaining(_ total: Int, seat: Int) -> String {
         let left = target - total
-        return left > 0 ? "ещё \(left)" : "цель"
+        if left > 0 { return "ещё \(left)" }
+        if seat == seats.humanSeat { return "дошли" }
+        return seats.persona(seat)?.feminine == true ? "дошла" : "дошёл"
     }
 }

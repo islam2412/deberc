@@ -22,13 +22,14 @@ struct LevelAdvice: Equatable {
             let streak = stats.currentStreak
             let strongRate = played >= 5 && won * 4 >= played * 3
             if streak >= 3 || strongRate {
+                // Название уровня — в кавычках и после слова «уровень»: «против «Любитель»» не по-русски.
                 let reason = streak >= 3
                     ? "\(RuPlural.count(streak, "победа", "победы", "побед")) подряд"
-                    : "\(won) из \(played) против «\(top.title)»"
+                    : "\(RuPlural.count(won, "победа", "победы", "побед")) из \(played) на уровне «\(top.title)»"
                 return LevelAdvice(
                     level: next,
                     text: "\(reason) — похоже, вы сильнее. Попробуете соперников уровня «\(next.title)»?",
-                    buttonTitle: "Играть с «\(next.title)»",
+                    buttonTitle: "Играть на уровне «\(next.title)»",
                     isStepUp: true)
             }
         }
@@ -36,8 +37,8 @@ struct LevelAdvice: Equatable {
             let losses = -stats.currentStreak
             return LevelAdvice(
                 level: previous,
-                text: "\(RuPlural.count(losses, "поражение", "поражения", "поражений")) подряд. Можно сыграть с соперниками попроще — «\(previous.title)».",
-                buttonTitle: "Играть с «\(previous.title)»",
+                text: "\(RuPlural.count(losses, "поражение", "поражения", "поражений")) подряд. Можно сыграть с соперниками попроще — уровня «\(previous.title)».",
+                buttonTitle: "Играть на уровне «\(previous.title)»",
                 isStepUp: false)
         }
         return nil
@@ -50,8 +51,8 @@ struct LevelAdvice: Equatable {
         guard record.played >= 5, record.won * 4 >= record.played * 3, stats.currentStreak >= 2 else { return nil }
         return LevelAdvice(
             level: next,
-            text: "Против «\(selected.title)» у вас \(record.won) из \(record.played). Может, «\(next.title)»?",
-            buttonTitle: "Выбрать «\(next.title)»",
+            text: "На уровне «\(selected.title)» у вас \(RuPlural.count(record.won, "победа", "победы", "побед")) из \(record.played). Может, попробовать «\(next.title)»?",
+            buttonTitle: "Выбрать уровень «\(next.title)»",
             isStepUp: true)
     }
 

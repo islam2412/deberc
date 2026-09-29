@@ -227,6 +227,7 @@ struct MenuView: View {
     @ViewBuilder
     private func opponentButton(_ slot: Int) -> some View {
         if let persona = opponent(slot) {
+            let style = persona.style.title(feminine: persona.feminine)
             Button {
                 sheet = slot == 0 ? .firstOpponent : .secondOpponent
             } label: {
@@ -238,7 +239,7 @@ struct MenuView: View {
                             .foregroundStyle(Theme.tableText)
                         HStack(spacing: 6) {
                             LevelStarsView(level: persona.level)
-                            Text("\(persona.level.title) · \(persona.style.title)")
+                            Text("\(persona.level.title) · \(style)")
                                 .font(.subheadline)
                                 .foregroundStyle(Theme.tableSecondaryText)
                                 .lineLimit(1)
@@ -259,7 +260,7 @@ struct MenuView: View {
             }
             .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Соперник: \(persona.name), \(persona.level.title), \(persona.style.title)")
+            .accessibilityLabel("Соперник: \(persona.name), \(persona.level.title), \(style)")
             .accessibilityHint("Выбрать другого соперника")
             .accessibilityAddTraits(.isButton)
         }
@@ -347,7 +348,8 @@ struct MenuView: View {
                 .font(.footnote)
                 .foregroundStyle(Theme.tableSecondaryText)
                 .multilineTextAlignment(.center)
-            if store.match != nil {
+            // В сборке из App Store ссылка — только в Настройках → О приложении.
+            if store.match != nil && AppInfo.isTestBuild {
                 ProblemReportLink()
                     .font(.footnote)
                     .foregroundStyle(Theme.tableSecondaryText)
@@ -357,7 +359,7 @@ struct MenuView: View {
 
     private var footerText: String {
         let rules = store.settings.rules
-        let kind = rules == .house ? "по нашим правилам" : "правила изменены в настройках"
+        let kind = rules == .house ? RulesText.housePhrase : "правила изменены в настройках"
         return "Новая партия — до \(Narrator.pointsGenitive(rules.targetScore)), \(kind)"
     }
 

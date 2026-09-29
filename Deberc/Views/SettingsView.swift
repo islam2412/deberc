@@ -202,7 +202,7 @@ struct SettingsView: View {
     private var rulesSummary: String {
         let rules = store.settings.rules
         let target = "до \(Narrator.pointsGenitive(rules.targetScore))"
-        return rules == .house ? "Наши, \(target)" : "Изменены, \(target)"
+        return rules == .house ? "\(RulesText.houseTitle), \(target)" : "Изменены, \(target)"
     }
 
     private var aboutSection: some View {

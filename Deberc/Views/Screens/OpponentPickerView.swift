@@ -117,7 +117,7 @@ struct PersonaCard: View {
                             .accessibilityHidden(true)
                     }
                 }
-                Text("\(persona.level.title) · \(persona.style.title)")
+                Text("\(persona.level.title) · \(persona.style.title(feminine: persona.feminine))")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.gold)
                 Text(persona.bio)

@@ -1,8 +1,8 @@
 import SwiftUI
 import DebercKit
 
-/// Приветствие при первом запуске — одна страница: что это за игра, три подсказки,
-/// как вас называть. «Играть» — сразу за стол, «Выбрать соперников» — в меню.
+/// Приветствие при первом запуске — одна страница: что это за игра, подсказки,
+/// как вас называть и крупный режим. «Играть» — сразу за стол, «Выбрать соперников» — в меню.
 struct OnboardingView: View {
     @EnvironmentObject private var store: GameStore
     @State private var name = ""
@@ -18,6 +18,7 @@ struct OnboardingView: View {
                     intro
                     hints
                     nameField
+                    largeModeToggle
                     buttons
                     Spacer(minLength: 12)
                 }
@@ -41,7 +42,7 @@ struct OnboardingView: View {
                 .font(.title.weight(.bold))
                 .foregroundStyle(Theme.tableText)
                 .accessibilityAddTraits(.isHeader)
-            Text("Деберц по вашим домашним правилам: партия до 701, обязы, байты и штрафы уже настроены.")
+            Text("Деберц \(RulesText.housePhrase): партия до \(store.settings.rules.targetScore), обязы, байты и штрафы уже настроены.")
                 .font(.body)
                 .foregroundStyle(Theme.tableSecondaryText)
                 .multilineTextAlignment(.center)
@@ -53,6 +54,8 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 16) {
             HintRow(icon: "hand.tap",
                     text: "Коснитесь карты — она приподнимется, коснитесь ещё раз — сходите. Или просто бросьте карту пальцем вверх, к центру стола.")
+            HintRow(icon: "hand.point.up.left",
+                    text: "Подержите палец на карте — она покажется крупно. Хода при этом не будет.")
             HintRow(icon: "line.3.horizontal.circle",
                     text: "В меню стола — запись партии, правила, подсказка, отмена хода и настройки.")
             HintRow(icon: "slider.horizontal.3",
@@ -91,6 +94,35 @@ struct OnboardingView: View {
                 .foregroundStyle(Theme.tableSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    /// Крупный режим — главная настройка для тех, кому мелко: предлагаем сразу, а не прячем
+    /// в Настройках → Вид. Переключатель пишет прямо в настройки, поэтому текст этой страницы
+    /// и образец карт меняются на глазах — видно, что получится.
+    private var largeModeToggle: some View {
+        let large = store.settings.largeCards
+        return VStack(alignment: .leading, spacing: 12) {
+            Toggle(isOn: $store.settings.largeCards) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Крупные карты и кнопки")
+                        .font(.headline)
+                        .foregroundStyle(Theme.tableText)
+                    Text("Легче читать и попадать пальцем. Можно поменять в Настройках → Вид.")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.tableSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .tint(Theme.gold)
+            HStack(spacing: -(large ? 16 : 12)) {
+                ForEach([Card(.ace, .hearts), Card(.ten, .spades), Card(.king, .diamonds)], id: \.self) { card in
+                    CardView(card: card, width: large ? 60 : 44, largeIndex: large)
+                }
+            }
+            .accessibilityHidden(true)
+        }
+        .animation(.easeInOut(duration: 0.2), value: large)
+        .screenPanel()
     }
 
     private var buttons: some View {

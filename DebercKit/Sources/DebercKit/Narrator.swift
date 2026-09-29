@@ -345,4 +345,125 @@ public enum Narrator {
             return "Нужно перебить: козырь старше \(over)"
         }
     }
+
+    // MARK: - Словами для VoiceOver
+
+    // На экране карты и масти пишутся значками («Т♥», «10-В-Д-К♣»), а VoiceOver читает их
+    // как «Т, знак червей» или «десять дефис В дефис Д» — неразборчиво и долго.
+    // Здесь те же тексты словами; экранные строки (и тесты на них) не меняются.
+
+    /// Масть в родительном падеже: «пик», «треф», «бубен», «червей» — «дама червей».
+    public static func suitGenitive(_ suit: Suit) -> String {
+        switch suit {
+        case .spades: return "пик"
+        case .clubs: return "треф"
+        case .diamonds: return "бубен"
+        case .hearts: return "червей"
+        }
+    }
+
+    /// Достоинство в родительном падеже — для «от десятки до короля».
+    static func rankGenitive(_ rank: Rank) -> String {
+        switch rank {
+        case .seven: return "семёрки"
+        case .eight: return "восьмёрки"
+        case .nine: return "девятки"
+        case .ten: return "десятки"
+        case .jack: return "валета"
+        case .queen: return "дамы"
+        case .king: return "короля"
+        case .ace: return "туза"
+        }
+    }
+
+    /// Карта словами: «дама червей», «десятка пик».
+    public static func spokenCard(_ card: Card) -> String {
+        "\(card.rank.name) \(suitGenitive(card.suit))"
+    }
+
+    /// Комбинация словами, как её называют за столом: «полтинник от десятки до короля треф»
+    /// (на экране — «полтинник 10-В-Д-К♣»).
+    public static func spokenMeld(_ meld: Meld, rules: RuleSet) -> String {
+        "\(meld.name(rules)) \(spokenRun(from: meld.low, to: meld.high, suit: meld.suit))"
+    }
+
+    /// «от десятки до короля треф».
+    private static func spokenRun(from low: Rank, to high: Rank, suit: Suit) -> String {
+        "от \(rankGenitive(low)) до \(rankGenitive(high)) \(suitGenitive(suit))"
+    }
+
+    /// Сообщение о событии словами — для объявления VoiceOver (на экране — `message`):
+    /// «Саша играет, козырь черви», «Саша забирает туз червей за козырную семёрку».
+    public static func spokenMessage(for event: DealEvent, names: [String], humanSeat: Int?, rules: RuleSet) -> String? {
+        message(for: event, names: names, humanSeat: humanSeat, rules: rules).map(spoken)
+    }
+
+    /// То же с учётом партии после события (предупреждение о сдаче на обязах).
+    public static func spokenMessage(for event: DealEvent, in match: Match, humanSeat: Int?) -> String? {
+        message(for: event, in: match, humanSeat: humanSeat).map(spoken)
+    }
+
+    /// Любой текст с экрана словами — для сообщений внизу стола, реплик соперников,
+    /// подписей панели хода и пояснений к итогам:
+    /// «Т♥» → «туз червей», «10-В-Д-К♣» → «от десятки до короля треф»,
+    /// «козырь ♥ черви» → «козырь черви» (название уже рядом — значок просто пропадает),
+    /// «Беру ♦» → «Беру бубны». Остальной текст не меняется.
+    public static func spoken(_ text: String) -> String {
+        let chars = Array(text)
+        var result = ""
+        var i = 0
+        while i < chars.count {
+            // Карта начинается не посреди слова или числа: «110♥» — не десятка.
+            let atWordStart = i == 0 || !(chars[i - 1].isLetter || chars[i - 1].isNumber)
+            if atWordStart, let run = cardRun(chars, at: i), let first = run.ranks.first, let last = run.ranks.last {
+                result += run.ranks.count > 1
+                    ? spokenRun(from: first, to: last, suit: run.suit)
+                    : spokenCard(Card(first, run.suit))
+                i = run.end
+                continue
+            }
+            if let suit = suitSymbol(chars[i]) {
+                let name = Array(" " + suit.name)
+                let named = i + name.count < chars.count && Array(chars[(i + 1)...(i + name.count)]) == name
+                if named {
+                    i += 2   // значок и пробел: дальше идёт само название
+                } else {
+                    result += suit.name
+                    i += 1
+                }
+                continue
+            }
+            result.append(chars[i])
+            i += 1
+        }
+        return result
+    }
+
+    /// Достоинства через дефис и значок масти сразу за ними: «Т♥», «10-В-Д♣». nil — это не карта.
+    private static func cardRun(_ chars: [Character], at start: Int) -> (ranks: [Rank], suit: Suit, end: Int)? {
+        var ranks: [Rank] = []
+        var i = start
+        while let token = rankToken(chars, at: i) {
+            ranks.append(token.rank)
+            i += token.length
+            guard i < chars.count, chars[i] == "-", rankToken(chars, at: i + 1) != nil else { break }
+            i += 1
+        }
+        guard !ranks.isEmpty, i < chars.count, let suit = suitSymbol(chars[i]) else { return nil }
+        return (ranks, suit, i + 1)
+    }
+
+    /// Обозначение достоинства в тексте: «10» — два знака, остальные («7», «В», «Т») — один.
+    private static func rankToken(_ chars: [Character], at i: Int) -> (rank: Rank, length: Int)? {
+        guard chars.indices.contains(i) else { return nil }
+        if chars[i] == "1", chars.indices.contains(i + 1), chars[i + 1] == "0" { return (.ten, 2) }
+        guard let rank = Rank.allCases.first(where: { $0 != .ten && $0.symbol == String(chars[i]) }) else { return nil }
+        return (rank, 1)
+    }
+
+    /// Значок масти — и с селектором варианта («♥︎» для текстового вида — один символ).
+    private static func suitSymbol(_ character: Character) -> Suit? {
+        guard let scalar = character.unicodeScalars.first else { return nil }
+        return Suit.allCases.first { $0.symbol.unicodeScalars.first == scalar }
+    }
 }

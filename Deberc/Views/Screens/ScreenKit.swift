@@ -527,6 +527,17 @@ enum AppInfo {
     static var isPad: Bool {
         UIDevice.current.userInterfaceIdiom == .pad
     }
+
+    /// Сборка для проверки: из Xcode или из TestFlight (у неё «песочный» чек App Store).
+    /// Только в ней «Отправить сдачу» стоит прямо в итогах и в меню — родным, которые проверяют
+    /// игру, так удобнее. Покупателю из App Store эта ссылка непонятна, ему она — в Настройках.
+    static let isTestBuild: Bool = {
+        #if DEBUG
+        return true
+        #else
+        return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
+        #endif
+    }()
 }
 
 /// Имена мест для итогов, записи и конца партии.
