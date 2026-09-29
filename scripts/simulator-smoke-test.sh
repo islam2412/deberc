@@ -144,6 +144,23 @@ shot() { # shot <имя>
   fi
 }
 
+# wait_phase <секунд> "<шаблоны фаз>" — ждать, пока в progress появится фаза по одному из шаблонов;
+# печатает последнюю прочитанную фазу (пусто, если файла так и не было).
+wait_phase() {
+  local limit=$1 phase="" start=$SECONDS p
+  local -a patterns
+  read -r -a patterns <<<"$2"  # без подстановки имён файлов: «bidding-*» — шаблон фазы, а не файлов
+  while [ $((SECONDS - start)) -lt "$limit" ]; do
+    phase=$(progress | cut -f3)
+    for p in "${patterns[@]}"; do
+      # shellcheck disable=SC2254
+      case "$phase" in $p) printf '%s' "$phase"; return 0 ;; esac
+    done
+    sleep 1
+  done
+  printf '%s' "$phase"
+}
+
 progress() {
   # «сдачи<TAB>партии<TAB>фаза<TAB>время» из Library/Caches/autoplay-progress.json; пусто, если файла нет.
   python3 - "$PROGRESS" <<'PY' 2>/dev/null || true
@@ -266,18 +283,20 @@ scenario_relaunch() {
 
   # Восстановление партии: демо-запуск сохраняет идущую партию (за столом), следующий запуск
   # с -DebercResume открывает её как обычный перезапуск — должен вернуться стол, а не меню.
+  # На медленном симуляторе (старая iOS в CI) первый кадр бывает через десятки секунд — не фиксированная
+  # пауза, а ожидание: стол открылся (партия сохранена) и после перезапуска фаза записана.
+  rm -f "$PROGRESS"
   launch "resume-prep" -DebercScreen table -DebercPlayers 2
-  sleep 6
+  wait_phase 90 "bidding-* exchange playing" >/dev/null
+  sleep 2
   alive_or_die "партия для восстановления"
   stop_app
   rm -f "$PROGRESS"
   launch "resume" -DebercResume YES
-  sleep 6
+  local phase
+  phase=$(wait_phase 90 "bidding-* exchange playing menu")
   alive_or_die "восстановление партии"
   shot "resume"
-  local line phase
-  line=$(progress)
-  phase=$(printf '%s' "$line" | cut -f3)
   case "$phase" in
     bidding-* | exchange | playing) record "восстановление партии" "OK" "фаза: $phase" ;;
     *) die "После перезапуска не вернулся стол (фаза: ${phase:-нет данных})" ;;
