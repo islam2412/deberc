@@ -4,9 +4,9 @@ import XCTest
 final class StatsTests: XCTestCase {
 
     /// Доигрывает партию первым допустимым действием.
-    private func finishedMatch(seed: UInt64, players: Int = 2) throws -> Match {
+    private func finishedMatch(seed: UInt64, players: Int = 2, rules: RuleSet = .house) throws -> Match {
         var m = Match(playerCount: players, names: Array(["Вы", "Саша", "Миша"].prefix(players)),
-                      rules: .house, seed: seed)
+                      rules: rules, seed: seed)
         while !m.isOver {
             if m.needsNewDeal { m.startNextDeal() } else { try m.apply(try XCTUnwrap(m.deal).legalActions()[0]) }
         }
@@ -29,8 +29,31 @@ final class StatsTests: XCTestCase {
         let asBidder = m.history.filter { $0.wasPlayed && $0.bidder == 0 }
         XCTAssertEqual(stats.dealsAsBidder, asBidder.count)
         XCTAssertEqual(stats.dealsMade, asBidder.filter { $0.outcome == .made }.count)
-        XCTAssertEqual(stats.baits, asBidder.filter { $0.outcome == .bait || $0.outcome == .hanging }.count)
+        let countsHanging = m.rules.hangingCountsAsBait
+        XCTAssertEqual(stats.baits, asBidder.filter { $0.outcome == .bait || (countsHanging && $0.outcome == .hanging) }.count)
         XCTAssertGreaterThan(stats.dealsAsBidder, 0)
+    }
+
+    /// Висячий байт идёт в «Байтов», только если по правилам партии он считается байтом.
+    func testHangingCountsAsBaitOnlyByRule() throws {
+        for counts in [false, true] {
+            var rules = RuleSet.house
+            rules.hangingCountsAsBait = counts
+            var checked = false
+            for seed in 0..<300 {
+                let m = try finishedMatch(seed: UInt64(seed), rules: rules)
+                let asBidder = m.history.filter { $0.wasPlayed && $0.bidder == 0 }
+                let hanging = asBidder.filter { $0.outcome == .hanging }.count
+                guard hanging > 0 else { continue }
+                var stats = PlayerStats()
+                stats.record(match: m, humanSeat: 0, personaIDs: [], levelKey: nil)
+                let plain = asBidder.filter { $0.outcome == .bait }.count
+                XCTAssertEqual(stats.baits, plain + (counts ? hanging : 0), "seed \(seed)")
+                checked = true
+                break
+            }
+            XCTAssertTrue(checked, "Не нашлось партии с висячим байтом (правило: \(counts))")
+        }
     }
 
     func testMatchResultTitle() throws {

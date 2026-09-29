@@ -258,6 +258,23 @@ final class PlayRulesTests: XCTestCase {
         XCTAssertEqual(Set(legal), Set(hand))
     }
 
+    /// Без обязанности бить козырем перебивать тоже не нужно — даже при заходе с козыря
+    /// и выбранном в настройках «перебивать всегда».
+    func testNoOvertrumpWithoutTrumpObligation() {
+        var loose = rules
+        loose.mustTrump = false
+        loose.overtrump = .always
+        XCTAssertEqual(loose.effectiveOvertrump, .never)
+        let hand = cards("Тч 8ч")
+        let legal = PlayRules.legalCards(hand: hand, trick: [c("10ч")], trump: .hearts, rules: loose)
+        XCTAssertEqual(Set(legal), Set(hand))
+        XCTAssertNil(PlayRules.violation(of: c("8ч"), hand: hand, trick: [c("10ч")], trump: .hearts, rules: loose))
+        // С обязанностью козырять правило «перебивать» работает как прежде.
+        var strict = loose
+        strict.mustTrump = true
+        XCTAssertEqual(PlayRules.legalCards(hand: hand, trick: [c("10ч")], trump: .hearts, rules: strict), [c("Тч")])
+    }
+
     func testTrickWinner() {
         XCTAssertEqual(PlayRules.winningIndex(cards("Кч Тч 10ч"), trump: .spades), 1)
         XCTAssertEqual(PlayRules.winningIndex(cards("Кч Тб 7п"), trump: .spades), 2)

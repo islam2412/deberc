@@ -9,7 +9,7 @@ public enum PlayRules {
 
         let sameSuit = hand.filter { $0.suit == led }
         if !sameSuit.isEmpty {
-            if led == trump, rules.overtrump != .never, let highestTrump {
+            if led == trump, rules.effectiveOvertrump != .never, let highestTrump {
                 let higher = sameSuit.filter { $0.power(trump: trump) > highestTrump }
                 if !higher.isEmpty { return higher }
             }
@@ -18,7 +18,7 @@ public enum PlayRules {
 
         let trumps = hand.filter { $0.suit == trump }
         if rules.mustTrump && !trumps.isEmpty {
-            if rules.overtrump == .always, let highestTrump {
+            if rules.effectiveOvertrump == .always, let highestTrump {
                 let higher = trumps.filter { $0.power(trump: trump) > highestTrump }
                 if !higher.isEmpty { return higher }
             }

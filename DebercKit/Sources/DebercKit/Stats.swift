@@ -48,7 +48,8 @@ public struct PlayerStats: Codable, Equatable, Sendable {
     public var dealsAsBidder: Int
     /// Из них сделано (набрали больше соперников).
     public var dealsMade: Int
-    /// Из них байтов (включая висячие).
+    /// Из них байтов; висячие — только если по правилам партии они считаются байтом.
+    /// Записи, сделанные раньше (висячие считались всегда), не пересчитываются.
     public var baits: Int
     /// Лучший счёт человека в конце партии.
     public var bestMatchScore: Int
@@ -105,7 +106,8 @@ public struct PlayerStats: Codable, Equatable, Sendable {
             dealsAsBidder += 1
             switch score.outcome {
             case .made: dealsMade += 1
-            case .bait, .hanging: baits += 1
+            case .bait: baits += 1
+            case .hanging where match.rules.hangingCountsAsBait: baits += 1
             default: break
             }
         }

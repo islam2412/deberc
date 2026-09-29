@@ -340,14 +340,13 @@ final class GameStore: ObservableObject {
             lastHumanActionAt = Date()
             cancelHint()
             lastStepWasBot = false
+            // Отменить можно только последнее своё решение и только пока соперник не ответил.
+            // Решение, после которого открылось скрытое (прикуп, чужие комбинации), не отменить.
+            let revealed = events.contains { $0.revealsHidden }
+            let undoable = byUser && !forced && !revealed
             if !autoplay {
-                // Отменить можно только последнее своё решение и только пока соперник не ответил.
-                // Решение, после которого раздали прикуп, не отменить: карты прикупа уже видны.
-                let revealed = events.contains { if case .prikupDealt = $0 { return true } else { return false } }
-                if byUser && !forced && !revealed {
+                if undoable {
                     undoStack = [(before, rngBefore)]
-                    // Чуть дольше, чем обычно, до ответа соперника — успеть передумать.
-                    hold(.milliseconds(700))
                 } else {
                     clearUndo()
                 }
@@ -362,6 +361,9 @@ final class GameStore: ObservableObject {
                     break
                 }
             }
+            // Чуть дольше, чем обычно, до ответа соперника — успеть передумать
+            // (и после сброшенной «печати» тоже).
+            if !autoplay && undoable { hold(.milliseconds(700)) }
             withAnimation(animation(.spring(response: 0.35, dampingFraction: 0.82))) {
                 selectedCard = nil
                 hintAction = nil
@@ -426,14 +428,26 @@ final class GameStore: ObservableObject {
     }
 
     /// Касание карты не в свой ход: коротко сказать, чего ждём (не чаще раза в 3 секунды).
+    /// Второе касание двойного тапа сразу после своего хода — не вопрос «почему не хожу».
     private func explainNotYourTurn() {
-        guard !autoplay, isInGame, !showDealSummary, let match, let deal = match.deal,
+        guard !autoplay, isInGame, !showDealSummary, !isRepeatTap, let match, let deal = match.deal,
               Date().timeIntervalSince(lastNotYourTurnAt) > 3 else { return }
         let text: String
         switch deal.phase {
-        case .bidding, .exchange:
+        case .bidding(let round):
             guard let actor = match.actor else { return }
-            text = actor == humanSeat ? "Сначала торговля: беру или пас" : "Идёт торговля — отвечает \(displayName(for: actor))"
+            if actor == humanSeat {
+                text = round == 1
+                    ? "Сначала торговля: «Беру» или «Пас»"
+                    : "Сначала торговля: назовите козырь или «Пас»"
+            } else {
+                text = "Идёт торговля — отвечает \(displayName(for: actor))"
+            }
+        case .exchange:
+            guard let actor = match.actor else { return }
+            text = actor == humanSeat
+                ? "Сначала решите, менять ли козырную семёрку"
+                : "\(displayName(for: actor)) решает про семёрку"
         case .playing:
             guard displayedTrick == nil, let actor = match.actor, actor != humanSeat else { return }
             text = "Сейчас ходит \(displayName(for: actor)) — подождите"
@@ -515,13 +529,14 @@ final class GameStore: ObservableObject {
     func undo() {
         // Двойное касание «Отменить» не должно отменять два хода (и сразу отменять только что сделанный).
         guard canUndo, !isRepeatTap, let snapshot = undoStack.popLast() else { return }
+        // Кнопка «Отменить» пропала — на её место встаёт лампочка: второе касание не за советом.
+        undoClearedAt = Date()
         let previous = snapshot.match
         rng = snapshot.rng
-        let wasBid: Bool = {
-            switch previous.deal?.phase {
-            case .bidding?, .exchange?: return true
-            default: return false
-            }
+        // В торговле отменяется только пас: после выбора козыря и обмена семёрки карты уже открыты.
+        let wasPass: Bool = {
+            if case .bidding? = previous.deal?.phase { return true }
+            return false
         }()
         lastHumanActionAt = Date()
         driver?.cancel()
@@ -534,7 +549,7 @@ final class GameStore: ObservableObject {
         }
         sounds.play(.collect)
         sounds.haptic(.soft)
-        showBanner(wasBid ? "Заявка отменена" : "Ход отменён — карта вернулась в руку", urgent: true)
+        showBanner(wasPass ? "Пас отменён" : "Ход отменён — карта вернулась в руку", urgent: true)
         noteActivity()
         persist()
         reportProgress()
@@ -1278,6 +1293,8 @@ final class GameStore: ObservableObject {
             cancelHint()
             thinkingSeat = nil
             showDealSummary = false
+            // Взятку со стола убираем, как при сборе: карту, закрывшую её, уже не отменить.
+            if displayedTrick != nil { clearUndo() }
             displayedTrick = nil
             selectedCard = nil
             hintAction = nil

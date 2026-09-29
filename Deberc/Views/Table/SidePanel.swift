@@ -15,7 +15,7 @@ struct SidePanel: View {
                 header
                 players
                 if match.pot > 0 {
-                    Text("Висят \(match.pot) \(TableText.plural(match.pot, "очко", "очка", "очков"))")
+                    Text("\(RuPlural.form(match.pot, "Висит", "Висят", "Висят")) \(Narrator.points(match.pot))")
                         .font(Theme.Typography.label)
                         .foregroundStyle(Theme.gold)
                 }
@@ -207,7 +207,7 @@ struct PersonaPanel: View {
                     content
                 }
             }
-            .frame(maxWidth: 380)
+            .frame(maxWidth: AppInfo.isPad ? 460 : 380)
             .modalCard(cornerRadius: 26)
             .padding(24)
             .modalPanelAccessibility(onClose: onClose)
@@ -222,11 +222,19 @@ struct PersonaPanel: View {
                 .font(.title2.weight(.bold))
                 .foregroundStyle(Theme.tableText)
                 .accessibilityAddTraits(.isHeader)
-            HStack(spacing: 8) {
-                LevelStarsView(level: persona.level, size: 13)
-                Text("\(persona.level.title) · \(persona.style.title(feminine: persona.feminine))")
-                    .font(Theme.Typography.label)
-                    .foregroundStyle(Theme.tableSecondaryText)
+            // Уровень и манера — в строку со звёздами; не помещаются (крупный текст) — звёзды над ними.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    LevelStarsView(level: persona.level, size: 13)
+                    levelLine
+                        .lineLimit(1)
+                }
+                VStack(spacing: 4) {
+                    LevelStarsView(level: persona.level, size: 13)
+                    levelLine
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
             }
             Text(persona.bio)
                 .font(.body)
@@ -243,6 +251,12 @@ struct PersonaPanel: View {
                 .padding(.top, 4)
         }
         .padding(24)
+    }
+
+    private var levelLine: some View {
+        Text("\(persona.level.title) · \(persona.style.title(feminine: persona.feminine))")
+            .font(Theme.Typography.label)
+            .foregroundStyle(Theme.tableSecondaryText)
     }
 
     private var recordText: String {

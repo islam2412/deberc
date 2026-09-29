@@ -102,7 +102,7 @@ public struct Persona: Codable, Hashable, Identifiable, Sendable {
         switch bid.kind {
         case .pass:
             switch (style, bid.round) {
-            case (.bold, 1): options = ["Пас", "Не в этот раз", "Пас, пока"]
+            case (.bold, 1): options = ["Пас", "Не в этот раз", "Пока пас"]
             case (.bold, _): options = ["Пас", "Не моя сдача", "Пропущу"]
             case (.cautious, 1): options = ["Пас", "Пожалуй, пас", "Воздержусь"]
             case (.cautious, _): options = ["Пас", "Лучше пас", "Воздержусь"]
@@ -111,14 +111,14 @@ public struct Persona: Codable, Hashable, Identifiable, Sendable {
             }
         case .take:
             switch style {
-            case .bold: options = ["Беру \(s)!", "Рискну: \(s)", "Беру, \(s)!"]
+            case .bold: options = ["Беру \(s)!", "Рискну: \(s)", "Беру: \(s)!"]
             case .cautious: options = ["Беру \(s)", "Пожалуй, беру \(s)", "Ладно, беру \(s)"]
-            case .balanced: options = ["Беру \(s)", "Беру \(s)", "Беру, \(s)"]
+            case .balanced: options = ["Беру \(s)", "Беру \(s)", "Беру: \(s)"]
             }
         case .name:
             switch style {
             case .bold: options = ["Играю \(s)!", "Рискну: \(s)", "Козырь \(s)!"]
-            case .cautious: options = ["Играю \(s)", "Пожалуй, \(s)", "Попробую \(s)"]
+            case .cautious: options = ["Играю \(s)", "Пожалуй, играю \(s)", "Попробую \(s)"]
             case .balanced: options = ["Играю \(s)", "Козырь \(s)", "Играю \(s)"]
             }
         case .forced:

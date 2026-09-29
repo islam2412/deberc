@@ -184,7 +184,7 @@ struct SimState {
         guard trickCount > 0 else { return hand }
         let same = hand & suitMask(led)
         if same != 0 {
-            if led == ctx.trump, ctx.rules.overtrump != .never, topTrump > 0 {
+            if led == ctx.trump, ctx.rules.effectiveOvertrump != .never, topTrump > 0 {
                 let higher = same & ctx.trumpAbove[topTrump]
                 if higher != 0 { return higher }
             }
@@ -192,7 +192,7 @@ struct SimState {
         }
         let trumps = hand & ctx.trumpBits
         if ctx.rules.mustTrump && trumps != 0 {
-            if ctx.rules.overtrump == .always, topTrump > 0 {
+            if ctx.rules.effectiveOvertrump == .always, topTrump > 0 {
                 let higher = trumps & ctx.trumpAbove[topTrump]
                 if higher != 0 { return higher }
             }
