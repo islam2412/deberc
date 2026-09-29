@@ -89,6 +89,15 @@ struct DealScoreTable: View {
             valueRow("Бэла", score.bellaPoints)
         }
         valueRow("Набрано", score.raw, bold: true)
+        // Байт: очки играющего ушли соперникам (или сгорели) — без этой строки «Набрано» и «Записано» не сходятся.
+        if score.outcome == .bait || score.outcome == .hanging {
+            valueRow(score.outcome == .hanging ? "Повисло" : "Байт",
+                     (0 ..< n).map { seat in
+                         score.written.indices.contains(seat) && score.raw.indices.contains(seat)
+                             ? score.written[seat] - score.raw[seat] : 0
+                     },
+                     signed: true, colored: true)
+        }
         if score.potAwarded.contains(where: { $0 != 0 }) {
             valueRow("Висячие", score.potAwarded, signed: true)
         }
@@ -104,6 +113,7 @@ struct DealScoreTable: View {
                 .foregroundStyle(Theme.tableSecondaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .gridColumnAlignment(.leading)
             ForEach(0 ..< n, id: \.self) { seat in
                 writtenCell(seat, compact: compact)
@@ -137,10 +147,12 @@ struct DealScoreTable: View {
     private func valueRow(_ title: String, _ values: [Int], signed: Bool = false, bold: Bool = false,
                           colored: Bool = false) -> some View {
         GridRow {
+            // Подпись забирает свободное место — числа прижаты к правому краю карточки.
             Text(title)
                 .foregroundStyle(Theme.tableSecondaryText)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .gridColumnAlignment(.leading)
             ForEach(0 ..< n, id: \.self) { seat in
                 let value = values.indices.contains(seat) ? values[seat] : 0

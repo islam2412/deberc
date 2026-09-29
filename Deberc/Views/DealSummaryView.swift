@@ -4,8 +4,8 @@ import DebercKit
 /// Итоги сдачи — карточка поверх стола.
 ///
 /// Исход крупно (значок: сделано / байт / висячий), таблица сдачи со столбцом играющего
-/// и окрашенным «Записано», засчитанные комбинации, пояснения и предупреждения о штрафах,
-/// счёт партии с полосками до цели, раскрывающиеся «Карты всех игроков» и «Взятки по порядку».
+/// и окрашенным «Записано», счёт партии с полосками до цели, засчитанные комбинации, пояснения
+/// и предупреждения о штрафах, раскрывающиеся «Карты всех игроков» и «Взятки по порядку».
 /// Внизу — «Следующая сдача», «Запись» и «В меню» (партия сохраняется).
 ///
 /// Конец партии показывает `MatchOverView` поверх стола (его ставит `RootView`);
@@ -52,9 +52,11 @@ struct DealSummaryView: View {
                 details
                     .padding(.horizontal, inset)
                     .padding(.top, inset)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 28)
             }
             .scrollBounceBehavior(.basedOnSize)
+            .summaryScrollHints()
+            .bottomFade()
             actions
                 .padding(.horizontal, inset)
                 .padding(.bottom, isNarrow ? 14 : 18)
@@ -89,15 +91,16 @@ struct DealSummaryView: View {
             VStack(spacing: 16) {
                 OutcomeHeader(score: score, seats: seats)
                 DealScoreTable(score: score, seats: seats)
-                notes(score)
+                // Счёт партии — до пояснений: на невысоком экране он виден сразу, без прокрутки.
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Счёт партии · до \(match.rules.targetScore)")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(Theme.tableSecondaryText)
-                    // О висячих очках уже сказано в пояснениях выше (Narrator.outcomeNotes).
+                    // О висячих очках сказано в пояснениях ниже (Narrator.outcomeNotes).
                     MatchProgressList(totals: match.totals, target: match.rules.targetScore, seats: seats)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                notes(score)
                 handsSection(score)
                 // Проверяющим (TestFlight) — прямо здесь; в сборке из App Store — только в Настройках.
                 if AppInfo.isTestBuild {
@@ -233,14 +236,15 @@ struct DealSummaryView: View {
         .buttonStyle(TableButtonStyle(prominent: true))
     }
 
-    /// «Запись» и «В меню»: в ряд со значками, в ряд без значков или друг под другом — но всегда словами целиком.
+    /// «Запись» и «В меню»: в ряд равной ширины со значками, без значков или друг под другом —
+    /// но всегда словами целиком.
     private var secondaryButtons: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 10) {
+            EqualWidthHStack(spacing: 10) {
                 scoreSheetButton(icon: true)
                 menuButton(icon: true)
             }
-            HStack(spacing: 10) {
+            EqualWidthHStack(spacing: 10) {
                 scoreSheetButton(icon: false)
                 menuButton(icon: false)
             }
@@ -276,6 +280,19 @@ struct DealSummaryView: View {
             onShowScoreSheet()
         } else {
             showScoreSheet = true
+        }
+    }
+}
+
+private extension View {
+    /// Полоса прокрутки итогов видна всегда и мигает при появлении — сразу понятно, что итоги длиннее окна.
+    @ViewBuilder
+    func summaryScrollHints() -> some View {
+        if #available(iOS 17.0, *) {
+            scrollIndicators(.visible)
+                .scrollIndicatorsFlash(onAppear: true)
+        } else {
+            scrollIndicators(.visible)
         }
     }
 }

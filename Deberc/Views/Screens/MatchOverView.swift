@@ -13,6 +13,8 @@ struct MatchOverView: View {
     @State private var appeared = false
     @State private var showScoreSheet = false
     @State private var showLastDeal = false
+    /// «Как прошла партия» открыта или свёрнута; nil — как принято для высоты экрана.
+    @State private var showFacts: Bool?
 
     private var seats: SeatNames { SeatNames(names: match.names, humanSeat: store.humanSeat) }
     private var humanWon: Bool { match.winner == store.humanSeat }
@@ -27,17 +29,32 @@ struct MatchOverView: View {
     var body: some View {
         ZStack {
             FeltBackground()
-            GeometryReader { geo in
-                let large = min(geo.size.width, geo.size.height) >= 600
-                let narrow = geo.size.width < 360
-                ScrollView {
-                    card(large: large, narrow: narrow)
-                        .frame(maxWidth: large ? 620 : 520)
+            GeometryReader { screen in
+                let large = min(screen.size.width, screen.size.height) >= 600
+                let narrow = screen.size.width < 360
+                let width: CGFloat = large ? 620 : 520
+                // Невысокий экран — «Как прошла партия» сначала свёрнута, как «Последняя сдача».
+                let factsOpen = showFacts ?? (screen.size.height >= 760)
+                // Кнопки не прокручиваются: «Реванш» виден сразу, итоги прокручиваются над ними.
+                // Карточка растягивается на высоту над кнопками — на iPad лишней прокрутки нет.
+                VStack(spacing: 0) {
+                    GeometryReader { geo in
+                        ScrollView {
+                            card(narrow: narrow, factsOpen: factsOpen)
+                                .frame(maxWidth: width)
+                                .padding(.horizontal, narrow ? 10 : 16)
+                                .padding(.top, 24)
+                                .padding(.bottom, 28)
+                                .frame(maxWidth: .infinity, minHeight: geo.size.height)
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .bottomFade()
+                    }
+                    buttons
+                        .frame(maxWidth: width)
                         .padding(.horizontal, narrow ? 10 : 16)
-                        .padding(.vertical, 24)
-                        .frame(maxWidth: .infinity, minHeight: geo.size.height)
+                        .padding(.bottom, 8)
                 }
-                .scrollBounceBehavior(.basedOnSize)
                 // На узком экране таблица и кнопки со словами целиком помещаются только до этого размера.
                 .dynamicTypeSize(...(narrow ? DynamicTypeSize.xxxLarge : DynamicTypeSize.accessibility3))
             }
@@ -61,14 +78,13 @@ struct MatchOverView: View {
         }
     }
 
-    private func card(large: Bool, narrow: Bool) -> some View {
+    private func card(narrow: Bool, factsOpen: Bool) -> some View {
         VStack(spacing: 20) {
             header
             standingsList
-            factsSection(narrow: narrow)
+            factsSection(narrow: narrow, isOpen: factsOpen)
             adviceSection
             lastDealSection
-            buttons
         }
         .padding(narrow ? 14 : 22)
         .background(
@@ -95,6 +111,8 @@ struct MatchOverView: View {
             Text(humanWon ? "Победа!" : "Партия окончена")
                 .font(.system(.largeTitle, design: .serif).weight(.bold))
                 .foregroundStyle(humanWon ? Theme.gold : Theme.tableText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
                 .accessibilityAddTraits(.isHeader)
             Text(subtitle)
                 .font(.headline)
@@ -158,30 +176,47 @@ struct MatchOverView: View {
 
     // MARK: - Как прошла партия
 
-    private func factsSection(narrow: Bool) -> some View {
+    private func factsSection(narrow: Bool, isOpen: Bool) -> some View {
         let played = match.history.filter { $0.wasPlayed }
         let redeals = match.history.count - played.count
         let count = redeals > 0
             ? "\(RuPlural.count(played.count, "сдача", "сдачи", "сдач")), пересдач \(redeals)"
             : RuPlural.count(played.count, "сдача", "сдачи", "сдач")
         return VStack(alignment: .leading, spacing: 10) {
-            ViewThatFits(in: .horizontal) {
-                HStack {
-                    factsTitle
-                    Spacer()
-                    factsCount(count)
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) { showFacts = !isOpen }
+            } label: {
+                HStack(spacing: 10) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack {
+                            factsTitle
+                            Spacer()
+                            factsCount(count)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            factsTitle
+                            factsCount(count)
+                        }
+                    }
+                    Image(systemName: "chevron.down")
+                        .foregroundStyle(Theme.gold)
+                        .rotationEffect(.degrees(isOpen ? 180 : 0))
+                        .accessibilityHidden(true)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    factsTitle
-                    factsCount(count)
-                }
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
             }
-            // Заголовки столбцов не переносятся по слогам: тесно — таблица мельче.
-            ViewThatFits(in: .horizontal) {
-                factsGrid(played: played, font: .subheadline, header: .caption, spacing: 12)
-                factsGrid(played: played, font: .footnote, header: .caption2, spacing: 8)
-                // Совсем тесно — та же таблица «набок»: строки — показатели, столбцы — игроки.
-                factsByPlayer(played: played)
+            .buttonStyle(.plain)
+            .accessibilityValue(isOpen ? "открыто" : "закрыто")
+            if isOpen {
+                // Заголовки столбцов не переносятся по слогам: тесно — таблица мельче.
+                ViewThatFits(in: .horizontal) {
+                    factsGrid(played: played, font: .subheadline, header: .caption, spacing: 12)
+                    factsGrid(played: played, font: .footnote, header: .caption2, spacing: 8)
+                    // Совсем тесно — та же таблица «набок»: строки — показатели, столбцы — игроки.
+                    factsByPlayer(played: played)
+                }
+                .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -204,11 +239,13 @@ struct MatchOverView: View {
         Grid(alignment: .trailing, horizontalSpacing: spacing, verticalSpacing: 6) {
             GridRow {
                 Text("")
-                factHeader("Играл", font: header)
-                factHeader("Сделал", font: header)
-                factHeader("Байт", font: header)
-                factHeader("Голый", font: header)
+                factHeader("Игр", font: header)
+                factHeader("Сделано", font: header)
+                factHeader("Байтов", font: header)
+                factHeader("Голых", font: header)
             }
+            // Строка игрока читается целиком («Саша: игр 4, сделано 2…») — заголовки отдельно не нужны.
+            .accessibilityHidden(true)
             ForEach(standings, id: \.self) { seat in
                 factRow(seat, played: played)
             }
@@ -225,20 +262,29 @@ struct MatchOverView: View {
     }
 
     /// Итоги игрока за партию: сколько раз играл, сделал, байтов, голых.
+    /// Байты и голые — из счётчиков партии, как в «Записи»: висячий байт считается по правилам.
     private func facts(_ seat: Int, played: [DealScore]) -> (played: Int, made: Int, baits: Int, naked: Int) {
         let asBidder = played.filter { $0.bidder == seat }
         let made = asBidder.filter { $0.outcome == .made }.count
-        let baits = asBidder.filter { $0.outcome == .bait || $0.outcome == .hanging }.count
+        let baits = match.baitCounts.indices.contains(seat) ? match.baitCounts[seat] : 0
         let naked = match.nakedCounts.indices.contains(seat) ? match.nakedCounts[seat] : 0
         return (asBidder.count, made, baits, naked)
+    }
+
+    /// «Саша: игр 4, сделано 2, байтов 1, голых 0».
+    private func spokenFacts(_ seat: Int, played: [DealScore]) -> String {
+        let f = facts(seat, played: played)
+        return "\(seats.column(seat)): игр \(f.played), сделано \(f.made), байтов \(f.baits), голых \(f.naked)"
     }
 
     private func factRow(_ seat: Int, played: [DealScore]) -> some View {
         let f = facts(seat, played: played)
         return GridRow {
+            // Имя забирает свободное место — таблица тянется на всю ширину карточки.
             Text(seats.column(seat))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .gridColumnAlignment(.leading)
             Text("\(f.played)")
             Text("\(f.made)")
@@ -247,6 +293,8 @@ struct MatchOverView: View {
                 .foregroundStyle(f.baits > 0 ? ScreenStyle.negative : Theme.tableText)
             Text("\(f.naked)")
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenFacts(seat, played: played))
     }
 
     private func factsByPlayer(played: [DealScore]) -> some View {
@@ -262,12 +310,15 @@ struct MatchOverView: View {
                         .minimumScaleFactor(0.8)
                 }
             }
-            factLine("Играл", all.map { ($0.played, Theme.tableText) })
-            factLine("Сделал", all.map { ($0.made, $0.made > 0 ? ScreenStyle.positive : Theme.tableText) })
-            factLine("Байт", all.map { ($0.baits, $0.baits > 0 ? ScreenStyle.negative : Theme.tableText) })
-            factLine("Голый", all.map { ($0.naked, Theme.tableText) })
+            factLine("Игр", all.map { ($0.played, Theme.tableText) })
+            factLine("Сделано", all.map { ($0.made, $0.made > 0 ? ScreenStyle.positive : Theme.tableText) })
+            factLine("Байтов", all.map { ($0.baits, $0.baits > 0 ? ScreenStyle.negative : Theme.tableText) })
+            factLine("Голых", all.map { ($0.naked, Theme.tableText) })
         }
         .font(.subheadline.monospacedDigit())
+        // Таблица «набок» читается так же, как обычная: по игроку за раз.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(standings.map { spokenFacts($0, played: played) }.joined(separator: ". "))
     }
 
     private func factLine(_ title: String, _ values: [(Int, Color)]) -> some View {
@@ -369,29 +420,42 @@ struct MatchOverView: View {
             }
             .buttonStyle(TableButtonStyle(prominent: true))
 
-            // «Новая партия» и «Запись»: в ряд, если помещаются словами целиком, иначе — друг под другом.
+            // «Новая партия» и «Запись» — в ряд равной ширины, если обе помещаются словами целиком,
+            // под ними «В меню». Тесно (крупный режим на узком экране) — «Новая партия» одна,
+            // а «Запись» и «В меню» короче — они в ряд: всё те же три ряда кнопок, а не четыре.
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    newGameButton(icon: true)
-                    scoreSheetButton(icon: true)
+                VStack(spacing: 10) {
+                    EqualWidthHStack(spacing: 10) {
+                        newGameButton(icon: true)
+                        scoreSheetButton(icon: true)
+                    }
+                    menuButton(icon: true)
                 }
-                HStack(spacing: 10) {
-                    newGameButton(icon: false)
-                    scoreSheetButton(icon: false)
+                VStack(spacing: 10) {
+                    EqualWidthHStack(spacing: 10) {
+                        newGameButton(icon: false)
+                        scoreSheetButton(icon: false)
+                    }
+                    menuButton(icon: true)
                 }
                 VStack(spacing: 10) {
                     newGameButton(icon: true)
-                    scoreSheetButton(icon: true)
+                    ViewThatFits(in: .horizontal) {
+                        EqualWidthHStack(spacing: 10) {
+                            scoreSheetButton(icon: true)
+                            menuButton(icon: true)
+                        }
+                        EqualWidthHStack(spacing: 10) {
+                            scoreSheetButton(icon: false)
+                            menuButton(icon: false)
+                        }
+                        VStack(spacing: 10) {
+                            scoreSheetButton(icon: true)
+                            menuButton(icon: true)
+                        }
+                    }
                 }
             }
-
-            Button {
-                store.leaveGame()
-            } label: {
-                Label("В меню", systemImage: "house")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(TableButtonStyle())
         }
     }
 }
@@ -405,6 +469,15 @@ extension MatchOverView {
         }
         .buttonStyle(TableButtonStyle())
         .accessibilityHint("С соперниками и правилами из меню")
+    }
+
+    fileprivate func menuButton(icon: Bool) -> some View {
+        Button {
+            store.leaveGame()
+        } label: {
+            SummaryButtonLabel(title: "В меню", systemImage: icon ? "house" : nil)
+        }
+        .buttonStyle(TableButtonStyle())
     }
 
     fileprivate func scoreSheetButton(icon: Bool) -> some View {

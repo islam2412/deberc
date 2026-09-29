@@ -9,7 +9,7 @@ struct StatsView: View {
     private var stats: PlayerStats { store.stats }
 
     var body: some View {
-        SheetContainer(title: "Статистика") {
+        SheetContainer(title: "Статистика", sizing: .page) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if stats.total.played == 0 {
@@ -62,9 +62,12 @@ struct StatsView: View {
     private var headline: some View {
         let total = stats.total
         return VStack(alignment: .leading, spacing: 6) {
-            Text("Побед: \(total.won) из \(total.played)")
+            // Одной строкой: «Побед: 12 из 30 · 40 %» на узком экране чуть мельче, но без переноса.
+            Text("Побед: \(total.won) из \(total.played) · \(percent(total.won, total.played))")
                 .font(.title.weight(.bold))
                 .foregroundStyle(Theme.tableText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             GoalProgressBar(value: total.won, target: max(1, total.played), height: 10)
             Text(streakText)
                 .font(.headline)
@@ -83,10 +86,9 @@ struct StatsView: View {
         return "Серии пока нет"
     }
 
+    /// Доля побед и число партий — уже в заголовке; плитки — рекорды.
     private var tiles: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 12)], spacing: 12) {
-            StatTile(value: percent(stats.total.won, stats.total.played), title: "побед")
-            StatTile(value: "\(stats.total.played)", title: RuPlural.form(stats.total.played, "партия", "партии", "партий"))
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
             StatTile(value: "\(stats.bestStreak)", title: "лучшая серия")
             StatTile(value: "\(stats.bestMatchScore)", title: "лучший счёт")
         }
@@ -99,7 +101,8 @@ struct StatsView: View {
                     .foregroundStyle(Theme.tableSecondaryText)
             } else {
                 StatsRow(title: "Назначали козырь", value: RuPlural.count(stats.dealsAsBidder, "раз", "раза", "раз"))
-                StatsRow(title: "Сделали игру", value: "\(stats.dealsMade) · \(percent(stats.dealsMade, stats.dealsAsBidder))")
+                StatsRow(title: "Сделали игру",
+                         value: "\(stats.dealsMade) из \(stats.dealsAsBidder) (\(percent(stats.dealsMade, stats.dealsAsBidder)))")
                 StatsRow(title: "Байтов", value: "\(stats.baits)")
             }
         }
@@ -152,7 +155,8 @@ struct StatsView: View {
 
     private func percent(_ part: Int, _ whole: Int) -> String {
         guard whole > 0 else { return "—" }
-        return "\(Int((Double(part) * 100 / Double(whole)).rounded()))%"
+        // Узкий неразрывный пробел: «33 %» не разрывается и не слипается.
+        return "\(Int((Double(part) * 100 / Double(whole)).rounded()))\u{202F}%"
     }
 }
 

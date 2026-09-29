@@ -60,8 +60,8 @@ struct ScoreSheetView: View {
             if match.pot > 0 {
                 // Запись открывают и после конца партии — тогда висячие уже сгорели.
                 Label(match.isOver
-                      ? "Висячие \(Narrator.points(match.pot)) не разыграны — партия окончена, они сгорели"
-                      : "Висят \(Narrator.points(match.pot)) — достанутся тому, кто наберёт больше всех в следующей сдаче",
+                      ? "Висячие очки (\(Narrator.number(match.pot))) не разыграны — партия окончена, они сгорели"
+                      : "Висячие очки (\(Narrator.number(match.pot))) достанутся тому, кто наберёт больше всех в следующей сдаче",
                       systemImage: "pause.circle")
                     .font(.subheadline)
                     .foregroundStyle(Theme.tableSecondaryText)

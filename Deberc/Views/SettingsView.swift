@@ -13,7 +13,7 @@ struct SettingsView: View {
     static let nameLimit = 12
 
     var body: some View {
-        SheetContainer(title: "Настройки") {
+        SheetContainer(title: "Настройки", sizing: .page) {
             Form {
                 gameSection
                 lookSection
@@ -23,6 +23,7 @@ struct SettingsView: View {
                 aboutSection
             }
             .scrollContentBackground(.hidden)
+            .padMargins()
         }
     }
 
@@ -58,12 +59,12 @@ struct SettingsView: View {
                              detail: "Весёлые подначки у аватара: не часто и без грубостей")
             }
             Toggle(isOn: $store.settings.showLivePoints) {
-                SettingLabel(title: "Мои очки во время сдачи", detail: "Сколько взяток и очков у вас уже есть")
+                SettingLabel(title: "Ваши очки во время сдачи", detail: "Сколько взяток и очков у вас уже есть")
             }
         } header: {
             Text("Игра").formHeaderStyle()
         } footer: {
-            Text("Действует сразу, и в идущей партии.").formHeaderStyle()
+            Text("Действует сразу — и в идущей партии.").formHeaderStyle()
         }
         .screenRow()
     }
@@ -127,7 +128,7 @@ struct SettingsView: View {
     private var soundSection: some View {
         Section {
             Toggle(isOn: $store.settings.soundEnabled) {
-                SettingLabel(title: "Звуки", detail: "Тихо, не перебивает музыку; молчит в беззвучном режиме")
+                SettingLabel(title: "Звук", detail: "Тихо, не перебивает музыку; молчит в беззвучном режиме")
             }
             if !AppInfo.isPad {
                 Toggle(isOn: $store.settings.hapticsEnabled) {
@@ -208,19 +209,35 @@ struct SettingsView: View {
     private var aboutSection: some View {
         Section {
             LabeledContent("Версия", value: AppInfo.version)
+            Link(destination: AppInfo.supportURL) {
+                Label("Написать разработчику", systemImage: "envelope")
+            }
+            .accessibilityHint("Письмо на \(AppInfo.supportEmail)")
             if store.match != nil {
                 ProblemReportLink()
             }
         } header: {
             Text("О приложении").formHeaderStyle()
         } footer: {
-            // Ссылка есть только при сохранённой партии — без неё и пояснять нечего.
-            if store.match != nil {
-                Text("«Сообщить о проблеме» готовит файл с партией и настройками — его можно отправить разработчику в Telegram или WhatsApp. Больше ничего не отправляется.")
-                    .formHeaderStyle()
-            }
+            // «Сообщить о проблеме» есть только при сохранённой партии — без неё и пояснять нечего.
+            Text(store.match != nil
+                 ? "Письмо уйдёт на \(AppInfo.supportEmail). «Сообщить о проблеме» готовит файл с партией и настройками — его можно приложить к письму. Больше ничего не отправляется."
+                 : "Письмо уйдёт на \(AppInfo.supportEmail).")
+                .formHeaderStyle()
         }
         .screenRow()
+    }
+}
+
+private extension View {
+    /// На iPad лист настроек — страницей: поля по бокам, чтобы строки не растягивались на всю ширину.
+    @ViewBuilder
+    func padMargins() -> some View {
+        if #available(iOS 17.0, *), AppInfo.isPad {
+            contentMargins(.horizontal, 60, for: .scrollContent)
+        } else {
+            self
+        }
     }
 }
 
