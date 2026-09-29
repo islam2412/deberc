@@ -34,17 +34,19 @@ struct OpponentPickerView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         ForEach(BotLevel.allCases, id: \.self) { level in
                             levelSection(level)
+                                .id(level)
                         }
                     }
                     .padding(16)
                     .frame(maxWidth: 640)
                     .frame(maxWidth: .infinity)
                 }
-                // Выбран соперник посильнее — список сразу на нём, а не на «Новичках» в начале.
+                // Выбран соперник посильнее — список сразу на его уровне (с заголовка уровня: текст над ним
+                // не режется пополам), а не на «Новичках» в начале.
                 .task {
                     guard let currentID, let current = Persona.byID(currentID),
                           current.level != .novice else { return }
-                    proxy.scrollTo(currentID, anchor: .center)
+                    proxy.scrollTo(current.level, anchor: .top)
                 }
             }
         }

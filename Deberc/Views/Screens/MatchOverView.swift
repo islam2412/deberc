@@ -38,15 +38,18 @@ struct MatchOverView: View {
                 // около 650–780 pt, «Увеличенный» вид) она свёрнута, как «Последняя сдача»: порог далеко
                 // от массовых моделей, и похожие телефоны ведут себя одинаково.
                 let factsOpen = showFacts ?? (large || screen.size.height >= 800)
+                // Невысокий экран (SE, «Увеличенный» вид): значок меньше, отступы плотнее —
+                // все места в таблице видны над кнопками целиком.
+                let short = screen.size.height < 700
                 // Кнопки не прокручиваются: «Реванш» виден сразу, итоги прокручиваются над ними.
                 // Карточка растягивается на высоту над кнопками — на iPad лишней прокрутки нет.
                 VStack(spacing: 0) {
                     GeometryReader { geo in
                         ScrollView {
-                            card(narrow: narrow, factsOpen: factsOpen)
+                            card(narrow: narrow, factsOpen: factsOpen, short: short)
                                 .frame(maxWidth: width)
                                 .padding(.horizontal, narrow ? 10 : 16)
-                                .padding(.top, 24)
+                                .padding(.top, short ? 10 : 24)
                                 .padding(.bottom, 28)
                                 .frame(maxWidth: .infinity, minHeight: geo.size.height)
                         }
@@ -85,9 +88,9 @@ struct MatchOverView: View {
         }
     }
 
-    private func card(narrow: Bool, factsOpen: Bool) -> some View {
-        VStack(spacing: 20) {
-            header
+    private func card(narrow: Bool, factsOpen: Bool, short: Bool) -> some View {
+        VStack(spacing: short ? 12 : 20) {
+            header(short: short)
             standingsList
             factsSection(narrow: narrow, isOpen: factsOpen)
             adviceSection
@@ -106,10 +109,10 @@ struct MatchOverView: View {
 
     // MARK: - Заголовок
 
-    private var header: some View {
-        VStack(spacing: 8) {
+    private func header(short: Bool) -> some View {
+        VStack(spacing: short ? 4 : 8) {
             Image(systemName: humanWon ? "trophy.fill" : "flag.checkered")
-                .font(.system(size: humanWon ? 64 : 48, weight: .semibold))
+                .font(.system(size: short ? (humanWon ? 40 : 30) : (humanWon ? 64 : 48), weight: .semibold))
                 .foregroundStyle(humanWon ? Theme.gold : Theme.tableSecondaryText)
                 .shadow(color: humanWon ? Theme.gold.opacity(0.5) : Color.clear, radius: 12)
                 .scaleEffect(appeared ? 1 : 0.3)
@@ -432,21 +435,14 @@ struct MatchOverView: View {
             }
             .buttonStyle(TableButtonStyle(prominent: true))
 
-            // «Новая партия» и «Запись» — в ряд равной ширины, если обе помещаются словами целиком,
-            // под ними «В меню». Тесно (крупный режим на узком экране) — «Новая партия» одна,
+            // «Новая партия» и «Запись» — в ряд равной ширины, если обе помещаются словами целиком
+            // (со значками — как «В меню» под ними). Тесно — «Новая партия» одна,
             // а «Запись» и «В меню» короче — они в ряд: всё те же три ряда кнопок, а не четыре.
             ViewThatFits(in: .horizontal) {
                 VStack(spacing: 10) {
                     EqualWidthHStack(spacing: 10) {
                         newGameButton(icon: true)
                         scoreSheetButton(icon: true)
-                    }
-                    menuButton(icon: true)
-                }
-                VStack(spacing: 10) {
-                    EqualWidthHStack(spacing: 10) {
-                        newGameButton(icon: false)
-                        scoreSheetButton(icon: false)
                     }
                     menuButton(icon: true)
                 }

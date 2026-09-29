@@ -61,8 +61,14 @@ struct SidePanel: View {
         let fraction = min(1, max(0, Double(score) / Double(target)))
         let name = store.displayName(for: seat)
         return HStack(spacing: 10) {
-            SeatAvatar(persona: store.persona(for: seat), name: seat == store.humanSeat ? "Вы" : name,
-                       seat: seat, size: 34)
+            // У себя — тот же аватар, что на плашке «Вы» и в меню (буква имени или человечек), а не «В».
+            Group {
+                if seat == store.humanSeat {
+                    HumanAvatarView(name: store.settings.playerName, size: 34)
+                } else {
+                    SeatAvatar(persona: store.persona(for: seat), name: name, seat: seat, size: 34)
+                }
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(name)
                     .font(Theme.Typography.label)

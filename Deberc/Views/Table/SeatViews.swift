@@ -141,6 +141,9 @@ struct HumanStrip: View {
             ViewThatFits(in: .horizontal) {
                 scorePlate(showsProgress: true, avatar: true, dealerWord: true)
                 scorePlate(showsProgress: false, avatar: true, dealerWord: true)
+                // Без аватара, но со словом «сдаёте»: кто сдаёт, важнее картинки — и в крупном режиме
+                // слово не сжимается до мелкой метки.
+                scorePlate(showsProgress: false, avatar: false, dealerWord: true)
                 scorePlate(showsProgress: false, avatar: true, dealerWord: false)
                 scorePlate(showsProgress: false, avatar: false, dealerWord: false)
             }

@@ -12,13 +12,16 @@ struct OnboardingView: View {
         GeometryReader { screen in
             let large = min(screen.size.width, screen.size.height) >= 600
             let width: CGFloat = large ? 600 : 480
+            // Невысокий экран (iPhone SE, «Увеличенный» вид): без веера карт над названием и плотнее —
+            // иначе переключатель крупного режима уходит под «Играть».
+            let tight = screen.size.height < 700
             // «Играть» не прокручивается — он внизу всегда; страница прокручивается над ним.
             VStack(spacing: 0) {
                 GeometryReader { geo in
                     ScrollView {
-                        VStack(spacing: 22) {
-                            Spacer(minLength: 12)
-                            BrandMark(large: large, compact: true, showsTagline: false)
+                        VStack(spacing: tight ? 14 : 22) {
+                            Spacer(minLength: tight ? 4 : 12)
+                            BrandMark(large: large, compact: true, showsFan: !tight, showsTagline: false)
                             intro
                             // Крупный режим — сразу под приветствием: кому мелко, увидит его без прокрутки.
                             largeModeToggle

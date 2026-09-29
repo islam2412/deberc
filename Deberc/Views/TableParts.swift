@@ -248,7 +248,8 @@ struct SeatPlate: View {
         return "\(info.name), \(level.title.lowercased())"
     }
 
-    /// Имя и звёзды уровня; тесно — одно имя.
+    /// Имя и звёзды уровня; тесновато — звёзды чуть мельче и ближе (иначе у одного соперника звёзды были бы,
+    /// а у соседа с именем на пару пунктов длиннее — нет); совсем тесно — одно имя.
     private var nameLine: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) {
@@ -256,6 +257,12 @@ struct SeatPlate: View {
                 if let level = info.persona?.level {
                     // По аватару: 10 pt на телефоне, 12 — в крупном режиме, 13–15 — на iPad.
                     LevelStarsView(level: level, size: (avatarSize * 0.24).rounded())
+                }
+            }
+            HStack(spacing: 3) {
+                nameText
+                if let level = info.persona?.level {
+                    LevelStarsView(level: level, size: (avatarSize * 0.19).rounded())
                 }
             }
             nameText

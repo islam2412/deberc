@@ -244,14 +244,16 @@ struct TableDecorations: View {
 
     // MARK: - Нижняя карта колоды
 
-    /// «низ» на нижней карте колоды — поверх карты, у её нижнего края. Шрифт — подписи стола:
+    /// «низ» на нижней карте колоды — поверх карты, целиком внутри неё у нижнего края (свисая за карту,
+    /// золотая метка почти касалась золотой рамки своей плашки под колодой). Шрифт — подписи стола:
     /// 13 pt и крупнее с размером текста и в крупном режиме — не мельче остальных подписей стола.
     @ViewBuilder
     private var bottomCardLabel: some View {
         if deal.bottomCardVisible, deal.bottomCard != nil, let slot = frames[.deck] {
             let w = scene.metrics.deckCardWidth
             let point = DeckGeometry.bottomCenter(slot, cardWidth: w)
-            let height = DeckGeometry.bottomWidth(cardWidth: w) * CardView.aspectRatio
+            let width = DeckGeometry.bottomWidth(cardWidth: w)
+            let height = width * CardView.aspectRatio
             Text("низ")
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.onGold)
@@ -260,7 +262,9 @@ struct TableDecorations: View {
                 .padding(.vertical, 1)
                 .background(Capsule().fill(Theme.gold))
                 .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
-                .position(x: point.x, y: point.y + height / 2 - 4)
+                .padding(.bottom, 3)
+                .frame(width: width, height: height, alignment: .bottom)
+                .position(x: point.x, y: point.y)
                 .accessibilityHidden(true)
         }
     }

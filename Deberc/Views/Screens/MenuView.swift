@@ -414,10 +414,12 @@ struct MenuView: View {
         }
     }
 
+    /// «по домашним правилам» уже написано под названием — здесь только цель партии
+    /// (и предупреждение, если правила меняли): одна строка, на невысоком экране не лезет под полоску «Домой».
     private var footerText: String {
         let rules = store.settings.rules
-        let kind = rules == .house ? RulesText.housePhrase : "правила изменены в настройках"
-        return "Новая партия — до \(Narrator.pointsGenitive(rules.targetScore)), \(kind)"
+        let goal = "Новая партия — до \(Narrator.pointsGenitive(rules.targetScore))"
+        return rules == .house ? goal : goal + ", правила изменены в настройках"
     }
 
     // MARK: - Листы

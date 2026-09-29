@@ -42,6 +42,10 @@ struct DealSummaryView: View {
     /// Невысокий экран (телефон лёжа): кнопки — в одну строку, чтобы итогам осталось место.
     private var isShort: Bool { maxHeight < 440 }
 
+    /// Невысокая карточка (iPhone SE, «Увеличенный» вид): без значка исхода и плотнее —
+    /// счёт партии виден сразу, без прокрутки.
+    private var isCompact: Bool { maxHeight < 640 }
+
     /// Узкий экран (iPhone с «Увеличенным» видом): поля меньше — тексту и кнопкам больше места.
     private var isNarrow: Bool { maxWidth < 360 }
     private var inset: CGFloat { isNarrow ? 14 : 20 }
@@ -52,7 +56,7 @@ struct DealSummaryView: View {
                 details
                     .padding(.horizontal, inset)
                     .padding(.top, inset)
-                    .padding(.bottom, 28)
+                    .padding(.bottom, isCompact ? 16 : 28)
             }
             .scrollBounceBehavior(.basedOnSize)
             .summaryScrollHints()
@@ -88,8 +92,8 @@ struct DealSummaryView: View {
         if match.isOver {
             matchOverFallback
         } else if let score = match.history.last {
-            VStack(spacing: 16) {
-                OutcomeHeader(score: score, seats: seats)
+            VStack(spacing: isCompact ? 10 : 16) {
+                OutcomeHeader(score: score, seats: seats, showsIcon: !isCompact)
                 DealScoreTable(score: score, seats: seats)
                 // Счёт партии — до пояснений: на невысоком экране он виден сразу, без прокрутки.
                 VStack(alignment: .leading, spacing: 8) {
@@ -320,13 +324,17 @@ struct SummaryButtonLabel: View {
 struct OutcomeHeader: View {
     let score: DealScore
     let seats: SeatNames
+    /// Значок исхода над заголовком; на невысоком экране его нет — заголовок и так цветной по смыслу.
+    var showsIcon = true
 
     var body: some View {
         VStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 34, weight: .semibold))
-                .foregroundStyle(tint)
-                .accessibilityHidden(true)
+            if showsIcon {
+                Image(systemName: icon)
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .accessibilityHidden(true)
+            }
             Text(Narrator.outcomeTitle(score, names: seats.names, humanSeat: seats.humanSeat))
                 .font(.title2.weight(.bold))
                 .multilineTextAlignment(.center)
