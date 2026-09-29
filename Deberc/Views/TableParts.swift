@@ -70,7 +70,10 @@ struct SeatInfo {
         } else if isActive {
             parts.append(isHuman ? "ваш ход" : "ходит")
         }
-        if tricks > 0 { parts.append("взяток \(tricks)") }
+        if tricks > 0 {
+            let count = RuPlural.count(tricks, "взятка", "взятки", "взяток")
+            parts.append(isHuman ? "у вас \(count)" : count)
+        }
         if baitMarks > 0 { parts.append("байтов: \(baitMarks) из \(rules.baitPenaltyEvery)") }
         if nakedMarks > 0 { parts.append("голых: \(nakedMarks) из \(rules.nakedPenaltyEvery)") }
         if let bubble { parts.append("говорит: \(Narrator.spoken(bubble))") }
@@ -630,7 +633,7 @@ struct BannerView: View {
 /// Во время торговли — какой идёт круг.
 struct TrumpBadge: View {
     let trump: Suit?
-    /// «играет Саша», «играете Вы», «обязы · Саша».
+    /// «играет Саша», «играете вы», «обязы · Саша».
     let detail: String?
     /// Круг торговли: 1, 2; 0 — все спасовали.
     let biddingRound: Int?
@@ -640,22 +643,30 @@ struct TrumpBadge: View {
     /// Сдача на обязах. Без подробности «играет …» (вдвоём) над мастью пишется «обязы» вместо «козырь»:
     /// после «печати» и первой карты это больше нигде не видно.
     var forced: Bool = false
-    /// Висячие очки или пересдачи золотом — верхней строкой вместо «козырь» или «Торговля»
-    /// (в ушке у выреза, где отдельной плашке `PotChip` места нет).
-    var note: String? = nil
     /// Две строки подписи или одна; nil — две, если текст не из самых крупных.
     var twoLinesOverride: Bool? = nil
+    /// Потеснее (ушко у выреза): поля 6 pt, промежуток 4 pt, значок 26 pt.
+    var tight = false
+    /// Сначала подпись, потом значок масти (правое ушко): значок дальше от острова,
+    /// и активная Live Activity его не закроет.
+    var iconTrailing = false
     @Environment(\.dynamicTypeSize) private var typeSize
+
+    /// Круги торговли в подписи — по ним же стол заранее решает, какой вид индикатора помещается.
+    static let roundTexts = ["1-й круг", "2-й круг", "все пас"]
 
     /// Две строки подписи помещаются в полосу только при обычных размерах текста.
     private var twoLines: Bool { twoLinesOverride ?? !typeSize.isAccessibilitySize }
 
     /// Узкий вариант — одна масть: кружок крупнее, его и читают.
-    private var badgeSize: CGFloat { compact && trump != nil ? min(36, height - 16) : min(30, height - 16) }
+    private var badgeSize: CGFloat {
+        if tight && !compact { return 26 }
+        return compact && trump != nil ? min(36, height - 16) : min(30, height - 16)
+    }
 
     var body: some View {
         content
-            .padding(.horizontal, compact ? 6 : 8)
+            .padding(.horizontal, compact || tight ? 6 : 8)
             .padding(.vertical, 3)
             .frame(height: height - 6)
             .tableSurface(cornerRadius: 14, highlighted: trump != nil)
@@ -669,21 +680,20 @@ struct TrumpBadge: View {
             if let trump {
                 SuitBadge(suit: trump, size: badgeSize)
             } else {
-                Text(roundText)
+                // Коротко и без `fixedSize`: в узком ушке у выреза подпись ужимается, а не заходит под вырез.
+                Text(shortRoundText)
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.tableText)
                     .lineLimit(1)
-                    .fixedSize()
+                    .minimumScaleFactor(0.6)
             }
         } else if let trump {
-            HStack(spacing: 6) {
-                SuitBadge(suit: trump, size: badgeSize)
-                VStack(alignment: .leading, spacing: 0) {
-                    if let note, detail == nil && twoLines {
-                        Text(note)
-                            .font(Theme.Typography.caption)
-                            .foregroundStyle(Theme.gold)
-                    } else if detail == nil && twoLines {
+            HStack(spacing: tight ? 4 : 6) {
+                if !iconTrailing {
+                    SuitBadge(suit: trump, size: badgeSize)
+                }
+                VStack(alignment: iconTrailing ? .trailing : .leading, spacing: 0) {
+                    if detail == nil && twoLines {
                         // Без «играет …» — подсказать, что это за масть.
                         Text(forced ? "обязы" : "козырь")
                             .font(Theme.Typography.caption)
@@ -700,14 +710,13 @@ struct TrumpBadge: View {
                 }
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                if iconTrailing {
+                    SuitBadge(suit: trump, size: badgeSize)
+                }
             }
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                if let note, twoLines {
-                    Text(note)
-                        .font(Theme.Typography.caption)
-                        .foregroundStyle(Theme.gold)
-                } else if twoLines {
+            VStack(alignment: iconTrailing ? .trailing : .leading, spacing: 0) {
+                if twoLines {
                     Text("Торговля")
                         .font(Theme.Typography.label)
                         .foregroundStyle(Theme.tableText)
@@ -723,9 +732,18 @@ struct TrumpBadge: View {
 
     private var roundText: String {
         switch biddingRound {
-        case 2: return "2-й круг"
+        case 2: return Self.roundTexts[1]
+        case 0: return Self.roundTexts[2]
+        default: return Self.roundTexts[0]
+        }
+    }
+
+    /// Для самого узкого вида: «круг 1», «круг 2», «все пас».
+    private var shortRoundText: String {
+        switch biddingRound {
+        case 2: return "круг 2"
         case 0: return "все пас"
-        default: return "1-й круг"
+        default: return "круг 1"
         }
     }
 
@@ -749,7 +767,7 @@ struct TrumpBadge: View {
         let trumpLines = twoLines
             ? max(suits, text.width("козырь", .caption), text.width("обязы", .caption))
             : suits
-        let rounds = ["1-й круг", "2-й круг", "все пас"].map { text.width($0, twoLines ? .caption : .label) }.max() ?? 0
+        let rounds = roundTexts.map { text.width($0, twoLines ? .caption : .label) }.max() ?? 0
         let bidding = twoLines ? max(text.width("Торговля", .label), rounds) : rounds
         return 16 + max(min(30, height - 16) + 6 + trumpLines, bidding)
     }
@@ -759,29 +777,52 @@ struct TrumpBadge: View {
 /// нигде нет, а вертикальную надпись у края стола пожилому игроку не прочесть, не наклонив голову.
 struct PotChip: View {
     let text: String
+    /// В две строки — «висят» над «40», «пересдача» над «1 из 2»: где места в ширину мало.
+    var twoLines = false
+    /// Не помещается и так в предложенную ширину — текст чуть мельче, а не за край экрана.
+    var shrinks = false
 
     var body: some View {
-        Text(text)
+        Text(twoLines ? Self.lines(text).joined(separator: "\n") : text)
             .font(Theme.Typography.caption)
             .foregroundStyle(Theme.gold)
-            .lineLimit(1)
-            .fixedSize()
+            .multilineTextAlignment(.center)
+            .lineLimit(twoLines ? 2 : 1)
+            .minimumScaleFactor(shrinks ? 0.7 : 1)
+            .fixedSize(horizontal: !shrinks, vertical: true)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .tableSurface(cornerRadius: 10)
             .accessibilityHidden(true)
     }
 
-    /// «висят 40» или «пересдач 1 из 2» (nil — показывать нечего).
+    /// «висит 21», «висят 40» или «пересдача 1 из 2» (nil — показывать нечего).
     static func text(pot: Int, redeals: Int, forcedAfter: Int) -> String? {
-        if pot > 0 { return "висят \(pot)" }
-        if redeals > 0 && forcedAfter > 0 { return "пересдач \(redeals) из \(forcedAfter)" }
+        if pot > 0 { return "\(RuPlural.form(pot, "висит", "висят", "висят")) \(pot)" }
+        if redeals > 0 && forcedAfter > 0 { return "пересдача \(redeals) из \(forcedAfter)" }
         return nil
+    }
+
+    /// Две строки: первое слово — и остальное.
+    private static func lines(_ text: String) -> [String] {
+        guard let space = text.firstIndex(of: " ") else { return [text] }
+        return [String(text[..<space]), String(text[text.index(after: space)...])]
+    }
+
+    /// Ширина плашки с этим текстом — в одну строку или в две.
+    static func width(_ text: String, _ metrics: TableTextMetrics, twoLines: Bool = false) -> CGFloat {
+        let parts = twoLines ? lines(text) : [text]
+        return (parts.map { metrics.width($0, .caption) }.max() ?? 0) + 16
+    }
+
+    /// Высота плашки в две строки.
+    static func twoLinesHeight(_ metrics: TableTextMetrics) -> CGFloat {
+        2 * metrics.lineHeight(.caption) + 6
     }
 
     /// Ширина с висячими очками — для заранее рассчитанной верхней полосы. Пересдачи подряд бывают редко,
     /// их строка длиннее — тогда плашка соперника рядом на время ужимается (убирает звёзды и полоску).
     static func estimatedWidth(_ text: TableTextMetrics) -> CGFloat {
-        text.width("висят 888", .caption) + 16
+        width("висят 888", text)
     }
 }

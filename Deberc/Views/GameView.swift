@@ -23,8 +23,9 @@ struct GameView: View {
         .cardAppearance(fourColor: store.settings.fourColorDeck, largeIndex: store.settings.largeCards,
                         back: store.settings.cardBack)
         .environment(\.tableLargeControls, store.settings.largeCards)
-        // Рука лежит у нижнего края: жест «Домой» — только со второго смахивания.
-        .defersSystemGestures(on: .bottom)
+        // Рука лежит у нижнего края: жест «Домой» — только со второго смахивания. Сверху — меню (в ушке у выреза
+        // или в полосе, а строка состояния скрыта): смахивание от ≡ не открывает сразу Центр уведомлений.
+        .defersSystemGestures(on: .vertical)
         .persistentSystemOverlays(.hidden)
         .sheet(isPresented: $showScoreSheet) {
             if let match = store.match {
@@ -72,6 +73,9 @@ struct GameView: View {
             if noTrick { showLastTrick = false }
         }
         .onAppear(perform: openRequestedScreen)
+        #if DEBUG
+        .onAppear(perform: Self.checkLayout)
+        #endif
         .onDisappear {
             if store.isOverlayPresented { store.isOverlayPresented = false }
         }
@@ -115,8 +119,10 @@ struct GameView: View {
                 TableScreen(match: match, deal: deal, metrics: metrics, commands: commands)
                     .dynamicTypeSize(tableType)
                 if metrics.earBar {
+                    // VoiceOver читает стол сверху: меню и козырь в ушках — первыми, хоть они и нарисованы поверх стола.
                     earBar(match: match, deal: deal, metrics: metrics, safeTop: safeTop, trump: true)
                         .dynamicTypeSize(tableType)
+                        .accessibilitySortPriority(1)
                 }
             } else {
                 ProgressView()
@@ -137,6 +143,7 @@ struct GameView: View {
                 Group {
                     if metrics.earBar, let deal = match.deal {
                         earBar(match: match, deal: deal, metrics: metrics, safeTop: safeTop, trump: false)
+                            .accessibilitySortPriority(1)
                     } else {
                         summaryMenu(metrics: metrics)
                     }
@@ -166,6 +173,8 @@ struct GameView: View {
                     .zIndex(8)
             }
         }
+        // Контейнер для VoiceOver: порядок чтения — внутри стола (ушки первыми), касания это не меняет.
+        .accessibilityElement(children: .contain)
         .animation(.easeInOut(duration: 0.25), value: store.showDealSummary)
         .animation(.easeInOut(duration: 0.2), value: showLastTrick)
         .animation(.easeInOut(duration: 0.2), value: personaSeat)
@@ -200,6 +209,48 @@ struct GameView: View {
             Spacer(minLength: 0)
         }
     }
+
+    #if DEBUG
+    /// `-DebercLayoutCheck`: прогнать раскладку стола по размерам iPhone (ширина × высота экрана, отступы
+    /// сверху и снизу) вдвоём и втроём, в обычном и крупном режиме, и напечатать, что не помещается.
+    private static var layoutChecked = false
+
+    private static func checkLayout() {
+        guard UserDefaults.standard.bool(forKey: "DebercLayoutCheck"), !layoutChecked else { return }
+        layoutChecked = true
+        let screens: [(name: String, width: CGFloat, height: CGFloat, top: CGFloat, bottom: CGFloat)] = [
+            ("14 Pro, «Увеличенный»", 320, 693, 48, 28),
+            ("X, XS, 11 Pro", 375, 812, 44, 34),
+            ("12 mini, 13 mini", 375, 812, 50, 34),
+            ("12–14, 16e", 390, 844, 47, 34),
+            ("14 Pro–16", 393, 852, 59, 34),
+            ("16 Pro, 17", 402, 874, 62, 34),
+            ("11, XR", 414, 896, 48, 34),
+            ("16 Pro Max", 440, 956, 62, 34),
+        ]
+        var checked = 0
+        var failed = 0
+        for screen in screens {
+            let size = CGSize(width: screen.width, height: screen.height - screen.top - screen.bottom)
+            for players in [2, 3] {
+                for large in [false, true] {
+                    for system in [DynamicTypeSize.large, .xxxLarge] {
+                        let type = TableMetrics.typeSize(system: system, size: size, large: large)
+                        let metrics = TableMetrics(size: size, playerCount: players, large: large, safeTop: screen.top,
+                                                   bottomInset: screen.bottom, typeSize: type)
+                        checked += 1
+                        let problems = metrics.layoutProblems
+                        guard !problems.isEmpty else { continue }
+                        failed += 1
+                        print("Раскладка: \(screen.name), \(players == 2 ? "вдвоём" : "втроём"), \(large ? "крупный" : "обычный") режим, "
+                              + "текст \(system): " + problems.joined(separator: "; "))
+                    }
+                }
+            }
+        }
+        print("Раскладка: проверено \(checked), с нарушениями \(failed)")
+    }
+    #endif
 
     /// `-DebercScreen scoresheet` (скриншоты CI): сразу открыть запись партии.
     private func openRequestedScreen() {
@@ -248,7 +299,7 @@ struct TableScreen: View {
         // Новая сдача — никакой карты «в пальцах» от прошлой.
         .onChange(of: match.dealCount) { _ in drag = nil }
         .onChange(of: store.banner) { banner in
-            if let banner { lastMessage = banner }
+            if let banner { lastMessage = Narrator.spoken(banner) }
         }
         .onChange(of: store.announcement) { announcement in
             if let announcement { lastMessage = spoken(announcement) }
@@ -298,10 +349,12 @@ struct TableScreen: View {
     @ViewBuilder
     private var opponentsRow: some View {
         if match.playerCount == 3 {
-            HStack(alignment: .top, spacing: 12) {
+            // Промежуток между соперниками — ровно 12 pt, не больше: колонки рассчитаны на него
+            // (`opponentColumnWidth`), и на 320 pt ряд не выходит за правый край.
+            HStack(alignment: .top, spacing: 0) {
                 SeatStack(info: seatInfo(leftSeat), metrics: metrics, commands: commands,
                           canShowLastTrick: store.lastTrick != nil, leading: true)
-                Spacer(minLength: 0)
+                Spacer(minLength: 12)
                 SeatStack(info: seatInfo(rightSeat), metrics: metrics, commands: commands,
                           canShowLastTrick: store.lastTrick != nil, leading: false)
             }
@@ -324,7 +377,7 @@ struct TableScreen: View {
             .tableSlot(.center)
             .accessibilityElement()
             .accessibilityLabel(centerDescription)
-            .accessibilityValue(store.banner ?? "")
+            .accessibilityValue(store.banner.map(Narrator.spoken) ?? "")
             .accessibilityHint(store.displayedTrick != nil ? "Коснитесь дважды, чтобы собрать взятку" : "")
             .accessibilityActions {
                 if store.displayedTrick != nil {
@@ -471,7 +524,7 @@ struct TableScreen: View {
         let cards = trick.plays.map { "\(store.displayName(for: $0.seat)) — \(CardView.spokenName($0.card))" }
         var text = "На столе: " + cards.joined(separator: ", ")
         if let displayed = store.displayedTrick, let winner = displayed.winner {
-            text += ". Взятку берёт \(store.displayName(for: winner))"
+            text += winner == store.humanSeat ? ". Взятка ваша" : ". Взятку берёт \(store.displayName(for: winner))"
             if TableScene.isLastTrick(displayed, of: deal) {
                 text += ", последняя — плюс 10 очков"
             }
