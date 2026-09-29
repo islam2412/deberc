@@ -21,6 +21,11 @@ import DebercKit
 ///     -DebercHumanDelay MS           автоигра: за человека компьютер ходит не раньше чем через MS мс,
 ///                                    чтобы на снимках были видны кнопки хода
 ///
+/// Остальные флаги (-DebercLarge, -DebercSpeed, -DebercBanter, -DebercZoom, -DebercScriptedHuman,
+/// -DebercDragPreview, -DebercHumanDelay) действуют только вместе с `-DebercAutoplay` или `-DebercScreen`:
+/// настройки игрока они не трогают. -DebercScriptedHuman ходит за человека теми же действиями,
+/// что и касания, — с отменой хода и всем прочим.
+///
 /// С любым из `-DebercAutoplay`/`-DebercScreen` приложение работает в «демо-режиме»:
 /// настройки, партия и статистика игрока не читаются и не затираются (свой отдельный каталог),
 /// а ход автоигры пишется в Library/Caches/autoplay-progress.json.

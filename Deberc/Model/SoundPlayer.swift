@@ -22,6 +22,8 @@ final class SoundPlayer {
         case lose
         /// Так ходить нельзя.
         case error
+        /// Ваш ход: мягкое «динь-дон», когда соперники сходили и ждут вас.
+        case turn
 
         var volume: Float {
             switch self {
@@ -32,6 +34,7 @@ final class SoundPlayer {
             case .win: return 0.55
             case .lose: return 0.45
             case .error: return 0.5
+            case .turn: return 0.4
             }
         }
 

@@ -100,20 +100,20 @@ enum GameFlow {
         return result
     }
 
-    /// Текст совета.
+    /// Текст совета — что сделать, словами.
     static func hintText(_ action: Action, deal: Deal?) -> String {
         switch action {
         case .play(let card):
-            return "Совет: \(card)"
+            return "Совет: ходите \(card)"
         case .take:
-            if let suit = deal?.openCard.suit { return "Совет: брать \(suit.symbol)" }
-            return "Совет: брать"
+            if let suit = deal?.openCard.suit { return "Совет: берите — козырь \(suit.symbol)" }
+            return "Совет: берите"
         case .name(let suit):
-            return "Совет: назначить \(suit.symbol)"
+            return "Совет: назовите козырь \(suit.symbol)"
         case .pass:
-            return "Совет: пас"
+            return "Совет: пасуйте"
         case .exchangeSeven(let accept):
-            return accept ? "Совет: поменять семёрку" : "Совет: оставить семёрку"
+            return accept ? "Совет: поменяйте семёрку" : "Совет: оставьте семёрку"
         }
     }
 
@@ -202,6 +202,8 @@ struct BannerQueue: Equatable {
         var important = false
         /// Подсказка длиной в предложение — держится вдвое дольше.
         var long = false
+        /// Подсказка первого хода (как ходить картой): считается показанной, только если провисела полностью.
+        var playTip = false
     }
 
     static let capacity = 4
@@ -227,14 +229,28 @@ struct BannerQueue: Equatable {
     }
 
     /// Срочное сообщение — первым. `current` — что на экране сейчас, `shownFor` — сколько секунд.
-    mutating func pushUrgent(_ text: String, current: Item?, shownFor: TimeInterval, long: Bool = false) {
+    /// Прерванное сообщение возвращается следом, если не успело побыть на экране: обычное — секунду,
+    /// важное и длинная подсказка — половину своего времени (флаги при этом сохраняются).
+    mutating func pushUrgent(_ text: String, current: Item?, shownFor: TimeInterval, base: Duration = .seconds(2),
+                             long: Bool = false, playTip: Bool = false) {
         items.removeAll { $0.text == text }
-        if let current, !current.urgent, current.text != text, shownFor < 1.0 {
-            items.removeAll { $0 == current }
-            items.insert(current, at: 0)
+        if let current, current.text != text {
+            let needed: TimeInterval
+            if current.long || current.important {
+                needed = hold(for: current, base: base).seconds * 0.5
+            } else {
+                needed = current.urgent ? 0 : 1.0
+            }
+            if shownFor < needed {
+                items.removeAll { $0 == current }
+                items.insert(current, at: 0)
+            }
         }
-        items.insert(Item(text: text, urgent: true, long: long), at: 0)
+        items.insert(Item(text: text, urgent: true, long: long, playTip: playTip), at: 0)
     }
+
+    /// В очереди ждёт подсказка первого хода.
+    var hasPlayTip: Bool { items.contains { $0.playTip } }
 
     mutating func pop() -> Item? {
         items.isEmpty ? nil : items.removeFirst()
@@ -246,10 +262,23 @@ struct BannerQueue: Equatable {
 
     /// Сколько держать сообщение (вызывать после `pop()`: учитывает, ждут ли следующие).
     func hold(for item: Item, base: Duration) -> Duration {
-        if item.long { return max(.milliseconds(3500), base * 2) }
-        if item.urgent { return max(.milliseconds(1600), base * 0.8) }
-        if item.important { return base }
-        return items.isEmpty ? base : max(.milliseconds(1100), base * 0.6)
+        let byKind: Duration
+        if item.long {
+            byKind = max(.milliseconds(3500), base * 2)
+        } else if item.urgent {
+            byKind = max(.milliseconds(1600), base * 0.8)
+        } else if item.important {
+            byKind = base
+        } else {
+            byKind = items.isEmpty ? base : max(.milliseconds(1100), base * 0.6)
+        }
+        // Длинное сообщение успевают прочитать: ~60 мс на знак, но не дольше 6 с.
+        return min(max(byKind, BannerQueue.readingTime(item.text)), max(byKind, .seconds(6)))
+    }
+
+    /// Сколько нужно, чтобы прочитать текст: ~60 мс на знак.
+    static func readingTime(_ text: String) -> Duration {
+        .milliseconds(60 * text.count)
     }
 }
 
@@ -301,5 +330,53 @@ enum DemoSimulator {
     static func dealJustScored(_ match: Match) -> Bool {
         guard let deal = match.deal, deal.isFinished, let last = match.history.last else { return false }
         return last.outcome != .allPassed
+    }
+}
+
+extension Duration {
+    /// Длительность в секундах.
+    var seconds: TimeInterval {
+        let parts = components
+        return TimeInterval(parts.seconds) + TimeInterval(parts.attoseconds) / 1e18
+    }
+}
+
+/// Текст для VoiceOver: карты и масти словами («Д♦» → «дама бубен», «♠» → «пики»),
+/// иначе VoiceOver читает «Д, чёрный ромб».
+enum SpokenText {
+    static func from(_ text: String) -> String {
+        let suits: [Character: Suit] = ["♠": .spades, "♣": .clubs, "♦": .diamonds, "♥": .hearts]
+        let ranks: [String: Rank] = ["7": .seven, "8": .eight, "9": .nine, "10": .ten,
+                                     "В": .jack, "Д": .queen, "К": .king, "Т": .ace]
+        var result = ""
+        var chars = Array(text.replacingOccurrences(of: "\u{FE0E}", with: ""))
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if let suit = suits[c] {
+                // Карта: достоинство прямо перед мастью («10♠», «Д♦») и не часть слова.
+                var rankText = ""
+                var rankStart = result.endIndex
+                if result.hasSuffix("10") {
+                    rankText = "10"
+                    rankStart = result.index(result.endIndex, offsetBy: -2)
+                } else if let last = result.last, ranks[String(last)] != nil {
+                    rankText = String(last)
+                    rankStart = result.index(before: result.endIndex)
+                }
+                let beforeRank = result[..<rankStart].last
+                if let rank = ranks[rankText], beforeRank.map({ !$0.isLetter && !$0.isNumber }) ?? true {
+                    result.removeSubrange(rankStart...)
+                    result += CardView.spokenName(Card(rank, suit))
+                } else {
+                    result += suit.name
+                }
+            } else {
+                result.append(c)
+            }
+            i += 1
+        }
+        chars.removeAll()
+        return result
     }
 }

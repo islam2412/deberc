@@ -27,6 +27,8 @@ struct ActionPanel: View {
         .frame(maxWidth: .infinity)
         .frame(minHeight: metrics.actionMinHeight)
         .padding(.horizontal, metrics.gutter)
+        // Зазор до руки: касание чуть выше поднятой карты не должно попадать в «Отменить» или «Совет».
+        .padding(.bottom, metrics.roomy ? 0 : 8)
     }
 
     /// Смена содержимого панели: старое исчезает сразу, новое проявляется — надписи не наезжают
@@ -249,27 +251,33 @@ struct ActionPanel: View {
 
     private var playing: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Ваш ход")
-                    .font(Theme.Typography.seatName)
-                    .foregroundStyle(Theme.gold)
-                if let subtitle = playSubtitle {
-                    Text(suited(subtitle))
-                        .font(Theme.Typography.caption)
-                        .foregroundStyle(Theme.tableSecondaryText)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                        .contentTransition(.identity)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // Строки меняются сразу, без анимации сдвига: иначе заголовок на миг наезжает на подпись.
-            .transaction { $0.animation = nil }
+            statusLines(title: "Ваш ход", titleColor: Theme.gold, subtitle: playSubtitle)
             if store.canUndo {
                 undoButton()
             }
-            hintButton
+            hintButton(labeled: true)
         }
+    }
+
+    /// Заголовок и подпись в две строки — одинаковой высоты и в «Ваш ход», и в «Ходит Саша…»:
+    /// иначе при каждой смене хода стол над панелью подскакивает на несколько точек.
+    private func statusLines(title: String?, titleColor: Color, subtitle: String?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title ?? " ")
+                .font(Theme.Typography.seatName)
+                .foregroundStyle(titleColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(suited(subtitle ?? " "))
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.tableSecondaryText)
+                .lineLimit(2, reservesSpace: true)
+                .minimumScaleFactor(0.8)
+        }
+        .contentTransition(.identity)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // Строки меняются сразу, без анимации сдвига: иначе заголовок на миг наезжает на подпись.
+        .transaction { $0.animation = nil }
     }
 
     private var playSubtitle: String? {
@@ -285,13 +293,27 @@ struct ActionPanel: View {
             : "Коснитесь карты — сразу ход"
     }
 
-    private var hintButton: some View {
+    private var hintButton: some View { hintButton(labeled: false) }
+
+    /// «Совет»: словом, если в ряду есть место (в тесных рядах торговли — значком).
+    private func hintButton(labeled: Bool) -> some View {
         Button {
             store.showHint()
         } label: {
             ZStack {
-                Image(systemName: "lightbulb")
-                    .opacity(store.isHinting ? 0 : 1)
+                Group {
+                    if labeled {
+                        ViewThatFits(in: .horizontal) {
+                            Label("Совет", systemImage: "lightbulb")
+                                .lineLimit(1)
+                                .fixedSize()
+                            Image(systemName: "lightbulb")
+                        }
+                    } else {
+                        Image(systemName: "lightbulb")
+                    }
+                }
+                .opacity(store.isHinting ? 0 : 1)
                 if store.isHinting {
                     ProgressView()
                         .tint(Theme.tableText)
@@ -329,28 +351,7 @@ struct ActionPanel: View {
 
     private var waitingLine: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                if let title = waitingTitle {
-                    Text(title)
-                        .font(Theme.Typography.label)
-                        .foregroundStyle(Theme.tableText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .contentTransition(.identity)
-                        .transition(.identity)
-                }
-                if let subtitle = waitingSubtitle {
-                    Text(suited(subtitle))
-                        .font(Theme.Typography.caption)
-                        .foregroundStyle(Theme.tableSecondaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .contentTransition(.identity)
-                        .transition(.identity)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .transaction { $0.animation = nil }
+            statusLines(title: waitingTitle, titleColor: Theme.tableText, subtitle: waitingSubtitle)
             if store.canUndo {
                 undoButton()
             }
@@ -397,14 +398,15 @@ struct ActionPanel: View {
     }
 }
 
-/// Золотое кольцо вокруг кнопки, которую советует подсказка.
+/// Золотое кольцо вокруг кнопки, которую советует подсказка — по форме кнопки (в крупном режиме она круглее).
 struct HintRing: ViewModifier {
     let active: Bool
+    @Environment(\.tableLargeControls) private var large
 
     func body(content: Content) -> some View {
         content.overlay {
             if active {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: (large ? 16 : 14) + 4, style: .continuous)
                     .strokeBorder(Theme.gold, lineWidth: 3)
                     .padding(-4)
                     .allowsHitTesting(false)

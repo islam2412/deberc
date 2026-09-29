@@ -107,6 +107,8 @@ final class GameStore: ObservableObject {
     private var bannerQueue = BannerQueue()
     private var bannerGeneration = 0
     private var bannerShownAt = Date.distantPast
+    /// Сообщение на экране целиком — со всеми флагами (важное, подсказка первого хода).
+    private var currentBannerItem: BannerQueue.Item?
     private var hintTask: Task<Void, Never>?
     private var announcementTask: Task<Void, Never>?
     private var announcementSerial = 0
@@ -267,6 +269,17 @@ final class GameStore: ObservableObject {
         if match.deal == nil {
             startNextDeal()
             return
+        }
+        // Вернулись к партии: сначала оглядеться — соперник не ходит сразу, а свежая раздача
+        // успевает долететь. Вынужденная карта в этот ход сама не уходит: пусть игрок сходит сам.
+        if let deal = match.deal, !deal.prikupDealt, deal.tricks.isEmpty {
+            hold(.milliseconds(Int(settings.speed.cardFlight * 1000) + 600))
+        } else {
+            hold(.milliseconds(1200))
+        }
+        handTouchedThisTurn = true
+        if let deal = match.deal {
+            humanTurnKey = [match.dealCount, deal.tricks.count, deal.currentTrick.plays.count, deal.bids.count]
         }
         drive()
     }
@@ -537,12 +550,16 @@ final class GameStore: ObservableObject {
     /// Срочное сообщение (ошибка хода, совет) показывается сразу, не дожидаясь очереди.
     /// `long` — подсказка в целое предложение: держится дольше.
     func showBanner(_ text: String, urgent: Bool, long: Bool = false) {
+        showBanner(text, urgent: urgent, long: long, playTip: false)
+    }
+
+    private func showBanner(_ text: String, urgent: Bool, long: Bool, playTip: Bool) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         if urgent {
-            let current = banner.map { BannerQueue.Item(text: $0, urgent: bannerIsUrgent) }
+            let current = banner == nil ? nil : currentBannerItem
             bannerQueue.pushUrgent(text, current: current, shownFor: Date().timeIntervalSince(bannerShownAt),
-                                   long: long)
+                                   base: settings.speed.bannerTime, long: long, playTip: playTip)
             pumpBanners()
         } else if bannerQueue.pushInfo(text, current: banner), bannerTask == nil {
             pumpBanners()
@@ -652,9 +669,8 @@ final class GameStore: ObservableObject {
 
     /// VoiceOver проговаривает событие, у которого вместо строки внизу — «печать» в центре.
     private func speak(_ event: DealEvent, in match: Match) {
-        guard UIAccessibility.isVoiceOverRunning,
-              let text = Narrator.message(for: event, in: match, humanSeat: humanSeat) else { return }
-        UIAccessibility.post(notification: .announcement, argument: text)
+        guard let text = Narrator.message(for: event, in: match, humanSeat: humanSeat) else { return }
+        speakForVoiceOver(text)
     }
 
     /// Главное сообщение сдачи (козырь, обмен семёрки): в очереди, но держится полное время.
@@ -717,19 +733,28 @@ final class GameStore: ObservableObject {
 
             case .collectTrick:
                 thinkingSeat = nil
-                guard await visibleSleep(settings.speed.trickPause) else { return }
+                // Считать от момента, когда последняя карта легла, — иначе полную взятку с подписью
+                // «Берёт Саша» видно меньше секунды.
+                guard await visibleSleep(settings.speed.trickPause
+                                         + .milliseconds(Int(settings.speed.cardFlight * 1000) + 200)) else { return }
                 gatherTrick()
 
             case .redeal:
                 thinkingSeat = nil
                 if autoplay, let match { traceDeal(match) }
-                guard await visibleSleep(settings.speed.bannerTime) else { return }
+                // Сообщение «Все спасовали… Следующая — на обязах» дочитывают до конца.
+                guard await visibleSleep(settings.speed.bannerTime), await waitForBanners() else { return }
                 startNextDeal()
                 return
 
             case .showSummary:
                 thinkingSeat = nil
-                guard await visibleSleep(.milliseconds(450)) else { return }
+                // Четыре семёрки выпадают сразу после раздачи: дать увидеть раздачу и прочитать сообщение.
+                let fourSevens = match?.history.last?.outcome == .fourSevens
+                let pause: Duration = fourSevens && !unattended
+                    ? .milliseconds(Int(settings.speed.cardFlight * 1000)) + settings.speed.bannerTime
+                    : .milliseconds(450)
+                guard await visibleSleep(pause) else { return }
                 presentSummary()
                 await advanceAutoplayIfNeeded()
                 return
@@ -741,7 +766,11 @@ final class GameStore: ObservableObject {
 
             case .waitHuman:
                 thinkingSeat = nil
-                if lastStepWasBot { sounds.haptic(.turn) }
+                // «Ваш ход» — вибрация и тихий сигнал; но не перед автоходом: карта всё равно уйдёт сама.
+                if lastStepWasBot && autoMoveCard() == nil {
+                    sounds.haptic(.turn)
+                    sounds.play(.turn)
+                }
                 lastStepWasBot = false
                 if let deal = match?.deal {
                     let key = [match?.dealCount ?? 0, deal.tricks.count, deal.currentTrick.plays.count, deal.bids.count]
@@ -872,12 +901,13 @@ final class GameStore: ObservableObject {
 
     /// Первый свой ход в розыгрыше — одна подсказка, как ходить картой.
     private func showPlayTipIfNeeded() {
-        guard !autoplay, !settings.hasSeenPlayTip, isHumanTurn, match?.deal?.phase == .playing else { return }
-        settings.hasSeenPlayTip = true
+        guard !autoplay, !settings.hasSeenPlayTip, isHumanTurn, match?.deal?.phase == .playing,
+              currentBannerItem?.playTip != true, !bannerQueue.hasPlayTip else { return }
+        // Показанной подсказка считается, только когда провисит целиком (её могла перебить ошибка хода).
         showBanner(settings.confirmCardTap
                    ? "Чтобы сходить, коснитесь карты дважды или бросьте её пальцем вверх, к центру стола"
                    : "Чтобы сходить, коснитесь карты или бросьте её пальцем вверх, к центру стола",
-                   urgent: true, long: true)
+                   urgent: true, long: true, playTip: true)
     }
 
     /// Отмена больше недоступна (соперник ответил, взятка собрана).
@@ -979,9 +1009,12 @@ final class GameStore: ObservableObject {
             switch event {
             case .bid(let bid):
                 bubbles[bid.seat] = phrase(for: bid)
+                if bid.seat != humanSeat {
+                    speakForVoiceOver("\(displayName(for: bid.seat)): \(Narrator.bidText(bid))")
+                }
             case .trumpChosen(let seat, let suit, let forced):
                 // Вместо строки внизу — крупная «печать» с мастью в центре стола.
-                announce(.trump(seat: seat, suit: suit, forced: forced), for: settings.speed.announcePause * 0.85)
+                announce(.trump(seat: seat, suit: suit, forced: forced), for: settings.speed.announcePause * 1.15)
                 speak(event, in: current)
                 if !forced {
                     if seat == humanSeat {
@@ -998,7 +1031,8 @@ final class GameStore: ObservableObject {
                     // Свои комбинации человек и так видит — их «печать» короче.
                     announce(.melds(seat: winner, melds: decl.melds[winner],
                                     points: decl.meldPoints(for: winner, rules: current.rules), senior: others),
-                             for: settings.speed.announcePause * (winner == humanSeat ? 0.7 : 0.9))
+                             for: settings.speed.announcePause * (winner == humanSeat ? 0.8 : 1.15)
+                                 + .milliseconds(winner == humanSeat ? 0 : 500 * decl.melds[winner].count))
                     speak(event, in: current)
                     if winner != humanSeat { banter(.botMelds, seat: winner) }
                     continue
@@ -1007,10 +1041,13 @@ final class GameStore: ObservableObject {
                 important = true
             case .prikupDealt:
                 sounds.play(.deal)
-            case .cardPlayed:
+            case .cardPlayed(let played):
                 // Реплики торговли («Беру ♦», «Пас») видны до первой карты розыгрыша.
                 if !bubbles.isEmpty { bubbles = [:] }
                 sounds.play(.card)
+                if played.seat != humanSeat {
+                    speakForVoiceOver("\(displayName(for: played.seat)): \(CardView.spokenName(played.card))")
+                }
             case .bella(let seat):
                 urgent = true
                 sounds.play(.bella)
@@ -1023,6 +1060,9 @@ final class GameStore: ObservableObject {
             case .trickCompleted(let trick):
                 displayedTrick = trick
                 if trick.winner == humanSeat && !autoplay { sounds.haptic(.soft) }
+                if let winner = trick.winner {
+                    speakForVoiceOver(winner == humanSeat ? "Ваша взятка" : "Взятку берёт \(displayName(for: winner))")
+                }
                 if let say = BanterTriggers.afterTrick(trick, trump: current.deal?.trump, humanSeat: humanSeat) {
                     // Когда последняя карта легла.
                     banter(say.event, seat: say.seat, after: .milliseconds(Int(settings.speed.cardFlight * 1000)))
@@ -1066,7 +1106,12 @@ final class GameStore: ObservableObject {
             hintAction = action
             if case .play(let card) = action { selectedCard = card }
         }
-        showBanner(GameFlow.hintText(action, deal: match?.deal), urgent: true)
+        // Совет торговли и обмена уже написан золотом в панели под кнопками — не дублировать внизу стола.
+        if case .play = action {
+            showBanner(GameFlow.hintText(action, deal: match?.deal), urgent: true)
+        } else {
+            speakForVoiceOver(GameFlow.hintText(action, deal: match?.deal))
+        }
         sounds.haptic(.select)
     }
 
@@ -1122,17 +1167,19 @@ final class GameStore: ObservableObject {
             guard let item = bannerQueue.pop() else {
                 withAnimation(.easeInOut(duration: 0.25)) { banner = nil }
                 bannerIsUrgent = false
+                currentBannerItem = nil
                 bannerTask = nil
                 return
             }
             let hold = bannerQueue.hold(for: item, base: settings.speed.bannerTime)
             withAnimation(.easeInOut(duration: 0.25)) { banner = item.text }
             bannerIsUrgent = item.urgent
+            currentBannerItem = item
             bannerShownAt = Date()
-            if UIAccessibility.isVoiceOverRunning {
-                UIAccessibility.post(notification: .announcement, argument: item.text)
-            }
+            speakForVoiceOver(item.text)
             guard await visibleSleep(hold), generation == bannerGeneration else { return }
+            // Подсказка первого хода провисела целиком — больше не показывать.
+            if item.playTip && !settings.hasSeenPlayTip { settings.hasSeenPlayTip = true }
         }
     }
 
@@ -1143,6 +1190,25 @@ final class GameStore: ObservableObject {
         bannerQueue.removeAll()
         banner = nil
         bannerIsUrgent = false
+        currentBannerItem = nil
+    }
+
+    /// Дождаться, пока покажут все сообщения (не дольше 6 с). false — задачу отменили.
+    private func waitForBanners() async -> Bool {
+        var waited = 0
+        while (banner != nil || !bannerQueue.isEmpty) && waited < 40 {
+            guard await visibleSleep(.milliseconds(150)) else { return false }
+            waited += 1
+        }
+        return true
+    }
+
+    /// Проговорить VoiceOver — в очередь, не обрывая то, что уже говорится.
+    private func speakForVoiceOver(_ text: String) {
+        guard UIAccessibility.isVoiceOverRunning else { return }
+        let spoken = NSAttributedString(string: SpokenText.from(text),
+                                        attributes: [.accessibilitySpeechQueueAnnouncement: true])
+        UIAccessibility.post(notification: .announcement, argument: spoken)
     }
 
     // MARK: - Внутреннее
@@ -1222,6 +1288,8 @@ final class GameStore: ObservableObject {
         sounds.hapticsEnabled = settings.hapticsEnabled && !autoplay
         if settings.soundEnabled && !old.soundEnabled { sounds.play(.card) }
         if settings.hapticsEnabled && !old.hapticsEnabled { sounds.haptic(.tap) }
+        // Включили автоход в свой ход — последняя карта уходит сразу, как и обещано в настройках.
+        if settings.autoPlay != old.autoPlay && isHumanTurn { drive() }
         if settings != old { storage.saveSettings(settings) }
     }
 
