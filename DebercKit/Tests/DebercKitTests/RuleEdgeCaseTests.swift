@@ -146,27 +146,39 @@ final class RuleEdgeCaseTests: XCTestCase {
     }
 
     func testForcedDealWithFourSevensKeepsForcedAndRotatesDealer() throws {
-        var m = match()
-        for d in [0, 1] {
-            m.startDeal(deck: twoPlayerDeck(dealer: d), dealer: d)
-            try passAll(&m)
+        for player in RuleSet.ForcedPlayer.allCases {
+            var r = rules
+            r.forcedPlayer = player
+            var m = match(rules: r)
+            for d in [0, 1] {
+                m.startDeal(deck: twoPlayerDeck(dealer: d), dealer: d)
+                try passAll(&m)
+            }
+            XCTAssertTrue(m.nextDealIsForced)
+            let events = m.startDeal(deck: fourSevensAfterPrikupDeck(), dealer: 0)
+            XCTAssertTrue(events.contains(.fourSevens(seat: 0)))
+            // Четыре семёрки собрались у места 0 после прикупа — на обязах играло место 1 (или сдающий).
+            XCTAssertTrue(events.contains(.trumpChosen(seat: player == .afterDealer ? 1 : 0, suit: .hearts, forced: true)))
+            let score = try XCTUnwrap(m.history.last)
+            XCTAssertEqual(score.outcome, .fourSevens)
+            XCTAssertTrue(score.forced)
+            XCTAssertEqual(m.totals, [100, 0])
+            XCTAssertEqual(m.allPassStreak, 2, "Пересдача из-за 4 семёрок не сбрасывает счёт до обязов")
+            XCTAssertTrue(m.nextDealIsForced)
+            XCTAssertEqual(m.upcomingDealer, 1)
+            // Сдаёт Саша: по домашним правилам играет следующий после него — вы, при «играет сдающий» — Саша.
+            XCTAssertEqual(Narrator.message(for: .fourSevens(seat: 0), in: m, humanSeat: 0),
+                           player == .afterDealer
+                           ? "Вы: четыре семёрки! +100 и пересдача. Следующая — на обязах: играете вы"
+                           : "Вы: четыре семёрки! +100 и пересдача. Следующая — на обязах: играет Саша")
+            m.startNextDeal()
+            let next = try XCTUnwrap(m.deal)
+            XCTAssertEqual(next.dealer, 1)
+            XCTAssertTrue(next.forced, "Снова обязы, сдаёт следующий по кругу")
+            if next.fourSevensSeat == nil || next.bidder != nil {
+                XCTAssertEqual(next.bidder, player == .afterDealer ? 0 : 1)
+            }
         }
-        XCTAssertTrue(m.nextDealIsForced)
-        let events = m.startDeal(deck: fourSevensAfterPrikupDeck(), dealer: 0)
-        XCTAssertTrue(events.contains(.fourSevens(seat: 0)))
-        let score = try XCTUnwrap(m.history.last)
-        XCTAssertEqual(score.outcome, .fourSevens)
-        XCTAssertTrue(score.forced)
-        XCTAssertEqual(m.totals, [100, 0])
-        XCTAssertEqual(m.allPassStreak, 2, "Пересдача из-за 4 семёрок не сбрасывает счёт до обязов")
-        XCTAssertTrue(m.nextDealIsForced)
-        XCTAssertEqual(m.upcomingDealer, 1)
-        XCTAssertEqual(Narrator.message(for: .fourSevens(seat: 0), in: m, humanSeat: 0),
-                       "Вы: четыре семёрки! +100 и пересдача. Следующая — на обязах: играет Саша")
-        m.startNextDeal()
-        let next = try XCTUnwrap(m.deal)
-        XCTAssertEqual(next.dealer, 1)
-        XCTAssertTrue(next.forced, "Обязы переходят к новому сдающему")
     }
 
     func testFourSevensResetsForcedStreakWhenSwitchedOff() throws {

@@ -97,12 +97,13 @@ public struct SeatView: Equatable, Sendable {
     /// Мой ли сейчас ход (сдача не окончена).
     public var isMyTurn: Bool { turn == seat && phase != .finished }
 
-    /// Кто сдаёт «на обязах», если и эта сдача закончится «все пас» (иначе nil).
-    /// После «все пас» сдаёт следующий по кругу при любом правиле смены сдающего.
+    /// Кто будет играть «на обязах», если и эта сдача закончится «все пас» (иначе nil).
+    /// После «все пас» сдаёт следующий по кругу при любом правиле смены сдающего,
+    /// а играет — кого назначает `RuleSet.forcedPlayer` при этом сдающем.
     public var forcedSeatIfAllPass: Int? {
         guard rules.forcedDealAfterRedeals > 0,
               allPassStreak + 1 >= rules.forcedDealAfterRedeals else { return nil }
-        return next(dealer)
+        return rules.forcedSeat(dealer: next(dealer), playerCount: playerCount)
     }
 
     /// Масти, которых точно нет у игроков (по тому, как они ходили).

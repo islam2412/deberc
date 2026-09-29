@@ -130,8 +130,8 @@ public enum Narrator {
         switch event {
         case .allPassed, .fourSevens:
             if !match.isOver, match.needsNewDeal, match.nextDealIsForced {
-                let dealer = match.upcomingDealer
-                text += ". Следующая — на обязах: \(bidderPhrase(seat: dealer, names: match.names, humanSeat: humanSeat))"
+                let seat = match.rules.forcedSeat(dealer: match.upcomingDealer, playerCount: match.playerCount)
+                text += ". Следующая — на обязах: \(bidderPhrase(seat: seat, names: match.names, humanSeat: humanSeat))"
             }
         default:
             break

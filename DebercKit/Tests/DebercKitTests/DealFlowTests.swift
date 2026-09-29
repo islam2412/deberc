@@ -102,10 +102,133 @@ final class DealFlowTests: XCTestCase {
         XCTAssertTrue(deal.forced)
         XCTAssertEqual(deal.dealer, 0, "Сдача переходит по кругу")
         if deal.fourSevensSeat != nil && deal.bidder == nil { return }
-        XCTAssertEqual(deal.bidder, deal.dealer, "На обязах играет сдающий")
+        XCTAssertEqual(deal.bidder, 1, "На обязах играет следующий после сдающего — вдвоём его соперник")
         XCTAssertEqual(deal.trump, deal.bids.first?.suit)
         XCTAssertEqual(deal.bids.map(\.kind), [.forced], "Торговли нет")
-        XCTAssertTrue(events.contains { if case .trumpChosen(_, _, true) = $0 { return true } else { return false } })
+        XCTAssertTrue(events.contains { if case .trumpChosen(1, _, true) = $0 { return true } else { return false } })
+    }
+
+    /// Руки троих без четырёх семёрок; открыта Кч, козырная семёрка (7ч) — у места 1.
+    private func threePlayerDeck(dealer: Int) -> [Card] {
+        arrangedDeck(
+            dealer: dealer,
+            hands: [cards("Вч 9ч Тп 10п Кп 7т"), cards("7ч 8ч Тб 10б Кб Дт"), cards("Дч 10ч Тт 7п 8п 9п")],
+            open: c("Кч"),
+            prikup: [cards("Дп Вп 8т"), cards("9т 10т Вт"), cards("7б 8б 9б")])
+    }
+
+    /// Пересдачи подряд (все пас) до обязов, затем раздача на обязах тем, кому положено сдавать.
+    /// Перед последним «пас» проверяет, что боты видят того же играющего на обязах.
+    private func forcedDeal(players: Int, rules r: RuleSet) throws -> (Match, [DealEvent]) {
+        var match = newMatch(players: players, rules: r)
+        let deck = { (dealer: Int) in players == 2 ? self.twoPlayerDeck(dealer: dealer) : self.threePlayerDeck(dealer: dealer) }
+        var predicted: Int?
+        for _ in 0..<r.forcedDealAfterRedeals {
+            match.startDeal(deck: deck(match.upcomingDealer), dealer: match.upcomingDealer)
+            while case .bidding = match.deal?.phase {
+                if let actor = match.actor { predicted = SeatView(match: match, seat: actor).forcedSeatIfAllPass }
+                try match.apply(.pass)
+            }
+            XCTAssertEqual(match.history.last?.outcome, .allPassed)
+        }
+        XCTAssertTrue(match.nextDealIsForced)
+        let dealer = match.upcomingDealer
+        let events = match.startDeal(deck: deck(dealer), dealer: dealer)
+        let deal = try XCTUnwrap(match.deal)
+        XCTAssertTrue(deal.forced)
+        XCTAssertEqual(deal.bidder, predicted, "SeatView.forcedSeatIfAllPass — тот, кто и правда играет на обязах")
+        return (match, events)
+    }
+
+    /// Вдвоём сдают по очереди: после двух пересдач сдаёт снова тот же игрок (место 0), и обязы
+    /// достаются его сопернику. При правиле «играет сдающий» — самому сдающему.
+    /// Первый ход — по правилу `firstLead`, даже когда играющий не сдающий.
+    func testForcedPlayerTwoPlayers() throws {
+        let cases: [(RuleSet.ForcedPlayer, RuleSet.FirstLead, bidder: Int, leader: Int)] = [
+            (.afterDealer, .afterDealer, 1, 1),
+            (.afterDealer, .bidder, 1, 1),
+            (.dealer, .afterDealer, 0, 1),
+            (.dealer, .bidder, 0, 0),
+        ]
+        for (player, firstLead, bidder, leader) in cases {
+            var r = rules
+            r.forcedPlayer = player
+            r.firstLead = firstLead
+            let (start, events) = try forcedDeal(players: 2, rules: r)
+            var match = start
+            var deal = try XCTUnwrap(match.deal)
+            XCTAssertEqual(deal.dealer, 0)
+            XCTAssertEqual(deal.bidder, bidder, "\(player)")
+            XCTAssertEqual(deal.bids, [Bid(seat: bidder, round: 1, kind: .forced, suit: .hearts)])
+            XCTAssertTrue(events.contains(.trumpChosen(seat: bidder, suit: .hearts, forced: true)))
+            // Козырная семёрка у места 1 — оно решает, менять ли её, кто бы ни играл.
+            XCTAssertEqual(deal.phase, .exchange)
+            XCTAssertEqual(deal.turn, 1)
+            try match.apply(.exchangeSeven(false))
+            deal = try XCTUnwrap(match.deal)
+            XCTAssertEqual(deal.phase, .playing)
+            XCTAssertEqual(deal.firstLeader, leader, "\(player), \(firstLead)")
+            XCTAssertEqual(deal.turn, leader)
+            try playOutFirstLegal(&match)
+            let score = try XCTUnwrap(match.history.last)
+            XCTAssertTrue(score.forced)
+            XCTAssertTrue(score.wasPlayed)
+            XCTAssertEqual(score.bidder, bidder)
+            XCTAssertEqual(match.allPassStreak, 0)
+        }
+    }
+
+    /// Втроём на обязах играет сидящий слева от сдающего (следующий по часовой), а при правиле
+    /// «играет сдающий» — сам сдающий.
+    func testForcedPlayerThreePlayers() throws {
+        let cases: [(RuleSet.ForcedPlayer, RuleSet.FirstLead, bidder: Int, leader: Int)] = [
+            (.afterDealer, .afterDealer, 0, 0),
+            (.afterDealer, .bidder, 0, 0),
+            (.dealer, .afterDealer, 2, 0),
+            (.dealer, .bidder, 2, 2),
+        ]
+        for (player, firstLead, bidder, leader) in cases {
+            var r = rules
+            r.forcedPlayer = player
+            r.firstLead = firstLead
+            let (start, events) = try forcedDeal(players: 3, rules: r)
+            var match = start
+            var deal = try XCTUnwrap(match.deal)
+            XCTAssertEqual(deal.dealer, 2, "Сдавали 0 и 1 — на обязах сдаёт 2")
+            XCTAssertEqual(deal.bidder, bidder, "\(player)")
+            XCTAssertEqual(deal.bids.map(\.seat), [bidder])
+            XCTAssertTrue(events.contains(.trumpChosen(seat: bidder, suit: .hearts, forced: true)))
+            if deal.phase == .exchange { try match.apply(.exchangeSeven(false)) }
+            deal = try XCTUnwrap(match.deal)
+            XCTAssertEqual(deal.firstLeader, leader, "\(player), \(firstLead)")
+            try playOutFirstLegal(&match)
+            XCTAssertEqual(match.history.last?.bidder, bidder)
+            XCTAssertEqual(match.history.last?.forced, true)
+        }
+    }
+
+    /// Обязы после одной пересдачи: сдающий сменился, играет следующий после нового сдающего.
+    func testForcedPlayerAfterSingleRedeal() throws {
+        var r = rules
+        r.forcedDealAfterRedeals = 1
+        let (match, _) = try forcedDeal(players: 2, rules: r)
+        XCTAssertEqual(match.deal?.dealer, 1)
+        XCTAssertEqual(match.deal?.bidder, 0)
+        r.forcedPlayer = .dealer
+        let (old, _) = try forcedDeal(players: 2, rules: r)
+        XCTAssertEqual(old.deal?.bidder, 1)
+    }
+
+    func testForcedSeatHelper() {
+        var r = RuleSet.house
+        XCTAssertEqual(r.forcedPlayer, .afterDealer)
+        XCTAssertEqual(r.forcedSeat(dealer: 0, playerCount: 2), 1)
+        XCTAssertEqual(r.forcedSeat(dealer: 1, playerCount: 2), 0)
+        XCTAssertEqual(r.forcedSeat(dealer: 2, playerCount: 3), 0)
+        XCTAssertEqual(r.forcedSeat(dealer: 0, playerCount: 3), 1)
+        r.forcedPlayer = .dealer
+        XCTAssertEqual(r.forcedSeat(dealer: 1, playerCount: 2), 1)
+        XCTAssertEqual(r.forcedSeat(dealer: 2, playerCount: 3), 2)
     }
 
     func testStreakResetsAfterPlayedDeal() throws {
@@ -304,6 +427,22 @@ final class MatchTests: XCTestCase {
         XCTAssertEqual(decoded, match)
     }
 
+    /// Правила, сохранённые до настройки «Кто играет на обязах»: читаются как домашние.
+    func testRulesWithoutForcedPlayerDecodeAsHouse() throws {
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(RuleSet.house)) as? [String: Any])
+        XCTAssertEqual(object["forcedPlayer"] as? String, "afterDealer")
+        object.removeValue(forKey: "forcedPlayer")
+        let old = try JSONDecoder().decode(RuleSet.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(old.forcedPlayer, .afterDealer)
+        XCTAssertEqual(old, .house)
+        object["forcedPlayer"] = "someoneElse"
+        XCTAssertEqual(try JSONDecoder().decode(RuleSet.self, from: JSONSerialization.data(withJSONObject: object)), .house)
+        var r = RuleSet.house
+        r.forcedPlayer = .dealer
+        XCTAssertEqual(try JSONDecoder().decode(RuleSet.self, from: JSONEncoder().encode(r)), r)
+        XCTAssertNotEqual(r, .house)
+    }
+
     func testRulesDecodeWithMissingKeys() throws {
         let json = #"{"targetScore": 501, "overtrump": "unknownValue"}"#.data(using: .utf8)!
         let rules = try JSONDecoder().decode(RuleSet.self, from: json)
@@ -316,6 +455,7 @@ final class MatchTests: XCTestCase {
         let r = RuleSet.house
         XCTAssertEqual(r.targetScore, 701)
         XCTAssertEqual(r.forcedDealAfterRedeals, 2)
+        XCTAssertEqual(r.forcedPlayer, .afterDealer)
         XCTAssertEqual(r.overtrump, .never)
         XCTAssertEqual(r.tieRule, .hangingBait)
         XCTAssertEqual(r.combosNeedTrick, .all)

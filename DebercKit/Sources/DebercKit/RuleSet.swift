@@ -14,6 +14,15 @@ public struct RuleSet: Codable, Equatable, Sendable {
         case afterDealer, bidder
     }
 
+    /// Кто играет на «обязах».
+    public enum ForcedPlayer: String, Codable, CaseIterable, Sendable {
+        /// Следующий после сдающего — тот, кто в торговле говорит первым
+        /// (вдвоём — соперник сдающего, втроём — сидящий слева от него).
+        case afterDealer
+        /// Сам сдающий.
+        case dealer
+    }
+
     /// Кто сдаёт следующую сдачу.
     public enum DealerRotation: String, Codable, CaseIterable, Sendable {
         /// Следующий по кругу.
@@ -87,6 +96,10 @@ public struct RuleSet: Codable, Equatable, Sendable {
     // MARK: Торговля
     /// После скольких пересдач подряд (все пас) наступают «обязы». 0 — обязов нет.
     public var forcedDealAfterRedeals = 2
+    /// Кто играет на «обязах»: по домашним правилам — следующий после сдающего.
+    /// Вдвоём сдают по очереди: после двух пересдач сдаёт снова тот же игрок, и при правиле
+    /// «играет сдающий» обязы доставались бы ему самому.
+    public var forcedPlayer = ForcedPlayer.afterDealer
     public var sevenExchange = SevenExchange.anyPlayer
     public var firstLead = FirstLead.afterDealer
     public var dealerRotation = DealerRotation.nextPlayer
@@ -95,7 +108,7 @@ public struct RuleSet: Codable, Equatable, Sendable {
     /// Считаются ли 4 семёрки после прикупа (до первого хода).
     public var fourSevensAfterPrikup = true
     /// Пересдача из-за 4 семёрок не сбрасывает счёт пересдач до «обязов»:
-    /// если это были обязы, следующая сдача — снова обязы (у нового сдающего).
+    /// если это были обязы, следующая сдача — снова обязы (сдаёт следующий, играющий — по `forcedPlayer`).
     /// Если выключено — после 4 семёрок счёт пересдач начинается заново.
     public var fourSevensKeepsForcedStreak = true
     public var bottomCard = BottomCard.afterPrikup
@@ -136,11 +149,19 @@ public struct RuleSet: Codable, Equatable, Sendable {
 
     public init() {}
 
+    /// Кто играет на «обязах» при сдающем `dealer`.
+    public func forcedSeat(dealer: Int, playerCount: Int) -> Int {
+        switch forcedPlayer {
+        case .afterDealer: return (dealer + 1) % playerCount
+        case .dealer: return dealer
+        }
+    }
+
     /// Домашние правила по умолчанию.
     public static let house = RuleSet()
 
     enum CodingKeys: String, CodingKey {
-        case targetScore, forcedDealAfterRedeals, sevenExchange, firstLead, dealerRotation
+        case targetScore, forcedDealAfterRedeals, forcedPlayer, sevenExchange, firstLead, dealerRotation
         case fourSevens, fourSevensBonus, fourSevensAfterPrikup, fourSevensKeepsForcedStreak, bottomCard
         case terzPoints, fiftyPoints, hundredForFive, bellaPoints, bellaInMelds, meldOrder, combosNeedTrick
         case mustTrump, overtrump
@@ -159,6 +180,7 @@ public struct RuleSet: Codable, Equatable, Sendable {
         }
         targetScore = value(.targetScore, d.targetScore)
         forcedDealAfterRedeals = value(.forcedDealAfterRedeals, d.forcedDealAfterRedeals)
+        forcedPlayer = value(.forcedPlayer, d.forcedPlayer)
         sevenExchange = value(.sevenExchange, d.sevenExchange)
         firstLead = value(.firstLead, d.firstLead)
         dealerRotation = value(.dealerRotation, d.dealerRotation)

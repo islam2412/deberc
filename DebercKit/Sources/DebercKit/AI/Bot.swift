@@ -334,7 +334,7 @@ public struct Bot: Sendable {
             }
             names[i] = 1 - pass
         }
-        // «Все пас»: пересдача или, при «обязах», сдача втёмную тому, кто говорит первым.
+        // «Все пас»: пересдача или, при «обязах», сдача втёмную тому, кого назначит правило.
         var redeal = 0.0
         if config.forcedAware, let forced = v.forcedSeatIfAllPass {
             redeal = forced == me ? -0.8 * Bot.forcedPassValue : Bot.forcedPassValue
@@ -388,17 +388,16 @@ public struct Bot: Sendable {
         return choice.name ? .name(Suit(rawValue: choice.suit)!) : .pass
     }
 
-    /// Вдвоём при угрозе «обязов» пас стоит не ноль: если спасует сдающий, соперник
-    /// сыграет втёмную (≈ +30 нам), а если спасуем мы, первым говорящим, — втёмную играть нам.
+    /// Вдвоём при угрозе «обязов» пас стоит не ноль: если после «все пас» втёмную играть
+    /// сопернику — пас выгоден (≈ +30 нам), а если нам — пас обходится дорого.
+    /// Кто играет на обязах, решает правило (`SeatView.forcedSeatIfAllPass`).
     /// Втроём замеры пользы не показали — там порог не меняется.
     func forcedShift(_ v: SeatView) -> Double {
         guard config.forcedAware, v.playerCount == 2, let forced = v.forcedSeatIfAllPass else { return 0 }
-        if v.seat == v.dealer { return Bot.forcedPassValue }
-        if v.seat == forced { return -0.8 * Bot.forcedPassValue }
-        return 0
+        return forced == v.seat ? -0.8 * Bot.forcedPassValue : Bot.forcedPassValue
     }
 
-    /// Во сколько очков обходится сдача «на обязах» сдающему (вдвоём, замер на самоигре).
+    /// Во сколько очков обходится сдача «на обязах» играющему (вдвоём, замер на самоигре).
     static let forcedPassValue = 30.0
 
     /// Торговля «на глаз»: простая оценка руки, как у начинающего игрока.

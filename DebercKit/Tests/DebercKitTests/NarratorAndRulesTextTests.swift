@@ -150,13 +150,28 @@ final class NarratorAndRulesTextTests: XCTestCase {
         r.forcedDealAfterRedeals = 0
         text = RulesText.markdown(for: r)
         XCTAssertFalse(text.contains("Обязы"))
+        XCTAssertFalse(text.contains("соперник сдающего"))
         XCTAssertFalse(text.contains("до обязов"), "Без обязов про счёт пересдач не пишем")
+    }
+
+    /// Кто играет на обязах: по домашним правилам — следующий после сдающего, не сам сдающий.
+    func testRulesTextForcedPlayer() {
+        var r = RuleSet.house
+        var text = RulesText.markdown(for: r)
+        XCTAssertTrue(text.contains("в следующей сдаче торговли нет — играет следующий после сдающего (вдвоём — соперник сдающего), козырь — масть открытой карты."))
+        XCTAssertFalse(text.contains("сдающий играет сам"))
+        r.forcedPlayer = .dealer
+        text = RulesText.markdown(for: r)
+        XCTAssertTrue(text.contains("в следующей сдаче торговли нет — сдающий играет сам, козырь — масть открытой карты."))
+        r.forcedDealAfterRedeals = 1
+        XCTAssertTrue(RulesText.markdown(for: r).contains("Обязы: если все спасовали и была пересдача, в следующей сдаче торговли нет — сдающий играет сам"))
     }
 
     func testRulesTextNewSwitches() {
         let house = RulesText.markdown(for: .house)
         XCTAssertTrue(house.contains("Король и дама из бэлы могут входить и в терц."))
-        XCTAssertTrue(house.contains("снова обязы, у нового сдающего"))
+        XCTAssertTrue(house.contains("следующая сдача — снова обязы."))
+        XCTAssertFalse(house.contains("у нового сдающего"))
         XCTAssertTrue(house.contains("лишнее очко получает тот, кто раньше ходит"))
         XCTAssertTrue(house.contains("Висячие очки, не разыгранные до конца партии, сгорают."))
         XCTAssertTrue(house.contains("по часовой стрелке"))
@@ -172,6 +187,7 @@ final class NarratorAndRulesTextTests: XCTestCase {
         let old = try JSONDecoder().decode(RuleSet.self, from: Data(#"{"targetScore": 501}"#.utf8))
         XCTAssertTrue(old.bellaInMelds)
         XCTAssertTrue(old.fourSevensKeepsForcedStreak)
+        XCTAssertEqual(old.forcedPlayer, .afterDealer)
         var r = RuleSet.house
         r.bellaInMelds = false
         r.fourSevensKeepsForcedStreak = false

@@ -229,44 +229,66 @@ final class BotTests: XCTestCase {
         XCTAssertGreaterThan(takes[.bold, default: 0], takes[.cautious, default: 0])
     }
 
-    /// Вдвоём перед «обязами»: сдающему пасовать выгодно, первому говорящему — нет.
+    /// Вдвоём перед «обязами» пасовать выгодно тому, кому после «все пас» играть не придётся,
+    /// и дорого тому, кому обязы достанутся. По домашним правилам на обязах играет следующий
+    /// после сдающего: следующую сдачу сдаёт соперник, значит, играть будет нынешний сдающий.
+    /// При правиле «играет сдающий» — наоборот (так было до настройки).
     func testForcedDealAwareness() throws {
-        var match = Match(playerCount: 2, names: ["A", "B"], rules: .house, seed: 1)
-        match.startDeal(deck: calmDeck(dealer: 0, seed: 11), dealer: 0)
-        for _ in 0..<4 { try match.apply(.pass) }
-        XCTAssertEqual(match.allPassStreak, 1)
-        match.startDeal(deck: calmDeck(dealer: 0, seed: 12), dealer: 0)
-        try match.apply(.pass)   // 1-й круг, место 1
-        try match.apply(.pass)   // 1-й круг, сдающий
-        let first = SeatView(match: match, seat: 1)
-        XCTAssertEqual(first.phase, .bidding(round: 2))
-        XCTAssertEqual(first.allPassStreak, 1)
-        XCTAssertEqual(first.forcedSeatIfAllPass, 1)
         let expert = Bot(level: .expert)
-        XCTAssertEqual(expert.forcedShift(first), -0.8 * Bot.forcedPassValue)
-        XCTAssertEqual(Bot(level: .novice).forcedShift(first), 0)
-        try match.apply(.pass)   // 2-й круг, место 1
-        let dealer = SeatView(match: match, seat: 0)
-        XCTAssertEqual(expert.forcedShift(dealer), Bot.forcedPassValue)
+        // [правило: (кто играет на обязах, сдвиг первого говорящего, сдвиг сдающего)]
+        let expected: [RuleSet.ForcedPlayer: (seat: Int, first: Double, dealer: Double)] = [
+            .afterDealer: (0, Bot.forcedPassValue, -0.8 * Bot.forcedPassValue),
+            .dealer: (1, -0.8 * Bot.forcedPassValue, Bot.forcedPassValue),
+        ]
+        for player in RuleSet.ForcedPlayer.allCases {
+            let want = try XCTUnwrap(expected[player])
+            var rules = RuleSet.house
+            rules.forcedPlayer = player
+            var match = Match(playerCount: 2, names: ["A", "B"], rules: rules, seed: 1)
+            match.startDeal(deck: calmDeck(dealer: 0, seed: 11), dealer: 0)
+            for _ in 0..<4 { try match.apply(.pass) }
+            XCTAssertEqual(match.allPassStreak, 1)
+            match.startDeal(deck: calmDeck(dealer: 0, seed: 12), dealer: 0)
+            try match.apply(.pass)   // 1-й круг, место 1
+            try match.apply(.pass)   // 1-й круг, сдающий
+            let first = SeatView(match: match, seat: 1)
+            XCTAssertEqual(first.phase, .bidding(round: 2))
+            XCTAssertEqual(first.allPassStreak, 1)
+            XCTAssertEqual(first.forcedSeatIfAllPass, want.seat, "\(player)")
+            XCTAssertEqual(expert.forcedShift(first), want.first, "\(player)")
+            XCTAssertEqual(Bot(level: .novice).forcedShift(first), 0)
+            try match.apply(.pass)   // 2-й круг, место 1
+            let dealer = SeatView(match: match, seat: 0)
+            XCTAssertEqual(dealer.forcedSeatIfAllPass, want.seat)
+            XCTAssertEqual(expert.forcedShift(dealer), want.dealer, "\(player)")
+            // Спасует и сдающий — обязы и правда у того, на кого рассчитывали боты.
+            try match.apply(.pass)
+            match.startNextDeal()
+            let forced = try XCTUnwrap(match.deal)
+            XCTAssertTrue(forced.forced)
+            if forced.fourSevensSeat == nil || forced.bidder != nil {
+                XCTAssertEqual(forced.bidder, want.seat, "\(player)")
+            }
 
-        // Без серии «все пас» порог обычный.
-        var calm = Match(playerCount: 2, names: ["A", "B"], rules: .house, seed: 1)
-        calm.startDeal(deck: calmDeck(dealer: 0, seed: 12), dealer: 0)
-        try calm.apply(.pass)
-        try calm.apply(.pass)
-        let view = SeatView(match: calm, seat: 1)
-        XCTAssertNil(view.forcedSeatIfAllPass)
-        XCTAssertEqual(expert.forcedShift(view), 0)
+            // Без серии «все пас» порог обычный.
+            var calm = Match(playerCount: 2, names: ["A", "B"], rules: rules, seed: 1)
+            calm.startDeal(deck: calmDeck(dealer: 0, seed: 12), dealer: 0)
+            try calm.apply(.pass)
+            try calm.apply(.pass)
+            let view = SeatView(match: calm, seat: 1)
+            XCTAssertNil(view.forcedSeatIfAllPass)
+            XCTAssertEqual(expert.forcedShift(view), 0)
 
-        // Втроём сдвиг не применяется.
-        var three = Match(playerCount: 3, names: ["A", "B", "C"], rules: .house, seed: 1)
-        three.startDeal(deck: calmDeck(dealer: 0, seed: 13), dealer: 0)
-        for _ in 0..<6 { try three.apply(.pass) }
-        three.startDeal(deck: calmDeck(dealer: 0, seed: 14), dealer: 0)
-        for _ in 0..<3 { try three.apply(.pass) }
-        let v3 = SeatView(match: three, seat: 1)
-        XCTAssertEqual(v3.forcedSeatIfAllPass, 1)
-        XCTAssertEqual(expert.forcedShift(v3), 0)
+            // Втроём сдвиг не применяется; сдаст место 1, играть будет место 2 (или сам сдающий).
+            var three = Match(playerCount: 3, names: ["A", "B", "C"], rules: rules, seed: 1)
+            three.startDeal(deck: calmDeck(dealer: 0, seed: 13), dealer: 0)
+            for _ in 0..<6 { try three.apply(.pass) }
+            three.startDeal(deck: calmDeck(dealer: 0, seed: 14), dealer: 0)
+            for _ in 0..<3 { try three.apply(.pass) }
+            let v3 = SeatView(match: three, seat: 1)
+            XCTAssertEqual(v3.forcedSeatIfAllPass, player == .afterDealer ? 2 : 1)
+            XCTAssertEqual(expert.forcedShift(v3), 0)
+        }
     }
 
     // MARK: - Обмен семёрки
