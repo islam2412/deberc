@@ -4,6 +4,14 @@ import Foundation
 /// (часть между маркерами `<!-- generated:start -->` и `<!-- generated:end -->`).
 public enum RulesText {
 
+    /// Как называется набор правил по умолчанию (`RuleSet.house`). Одно имя на всё приложение —
+    /// в меню, приветствии, настройках и при «Поделиться»: незнакомому игроку «наши» и «ваши»
+    /// ничего не говорят, а «домашние правила» — понятный набор, который можно поменять.
+    public static let houseTitle = "Домашние правила"
+
+    /// То же в подписях вида «Деберц по домашним правилам».
+    public static let housePhrase = "по домашним правилам"
+
     public struct Section: Sendable, Equatable {
         public let title: String
         public let items: [String]

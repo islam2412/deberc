@@ -67,12 +67,16 @@ public enum BotLevel: String, Codable, CaseIterable, Sendable, Comparable {
 public enum BotStyle: String, Codable, CaseIterable, Sendable {
     case cautious, balanced, bold
 
-    /// «Осторожный», «Ровный», «Рисковый».
-    public var title: String {
+    /// «Осторожный», «Ровный», «Рисковый» — мужской род, как у слова «характер».
+    public var title: String { title(feminine: false) }
+
+    /// Манера в роде персонажа: «Вера — Мастер · Осторожная», «Борис — Мастер · Ровный».
+    /// Уровни («Новичок», «Мастер») — существительные общего рода, им род не нужен.
+    public func title(feminine: Bool) -> String {
         switch self {
-        case .cautious: return "Осторожный"
-        case .balanced: return "Ровный"
-        case .bold: return "Рисковый"
+        case .cautious: return feminine ? "Осторожная" : "Осторожный"
+        case .balanced: return feminine ? "Ровная" : "Ровный"
+        case .bold: return feminine ? "Рисковая" : "Рисковый"
         }
     }
 

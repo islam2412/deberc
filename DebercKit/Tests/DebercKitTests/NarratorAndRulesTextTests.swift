@@ -42,6 +42,64 @@ final class NarratorAndRulesTextTests: XCTestCase {
             "Саша: полтинник 10-В-Д-К♣ — старше")
     }
 
+    // MARK: - Словами для VoiceOver
+
+    func testSpokenMessagesUseWordsInsteadOfSymbols() {
+        let names = ["Вы", "Саша", "Вера"]
+        let rules = RuleSet.house
+        func spoken(_ event: DealEvent) -> String? {
+            Narrator.spokenMessage(for: event, names: names, humanSeat: 0, rules: rules)
+        }
+        XCTAssertEqual(spoken(.trumpChosen(seat: 1, suit: .hearts, forced: false)), "Саша играет, козырь черви")
+        XCTAssertEqual(spoken(.trumpChosen(seat: 0, suit: .spades, forced: true)), "Обязы: Вы играете, козырь пики")
+        let exchange = SevenExchangeRecord(seat: 2, gave: Card(.seven, .hearts), took: Card(.ace, .hearts))
+        XCTAssertEqual(spoken(.sevenExchanged(exchange)), "Вера забирает туз червей за козырную семёрку")
+        let decl = Declarations(
+            melds: [[Meld(suit: .spades, low: .nine, length: 3)], [Meld(suit: .clubs, low: .ten, length: 4)], []],
+            meldWinner: 1, bellaSeat: nil)
+        XCTAssertEqual(spoken(.playStarted(decl)), "Саша: полтинник от десятки до короля треф — старше")
+        // На экране — по-прежнему значками.
+        XCTAssertEqual(Narrator.message(for: .sevenExchanged(exchange), names: names, humanSeat: 0, rules: rules),
+                       "Вера забирает Т♥ за козырную семёрку")
+    }
+
+    func testSpokenFreeText() {
+        XCTAssertEqual(Narrator.spoken("Заход: Саша, Т\u{2665}\u{FE0E}"), "Заход: Саша, туз червей")
+        XCTAssertEqual(Narrator.spoken("Нужно перебить: козырь старше 10♥"), "Нужно перебить: козырь старше десятка червей")
+        XCTAssertEqual(Narrator.spoken("Масти ♦ нет — нужно бить козырем ♥"), "Масти бубны нет — нужно бить козырем черви")
+        XCTAssertEqual(Narrator.spoken("Рискну: ♠"), "Рискну: пики")
+        XCTAssertEqual(Narrator.spoken("Беру ♦!"), "Беру бубны!")
+        XCTAssertEqual(Narrator.spoken("Вы: терц 7-8-9♠, бэла"), "Вы: терц от семёрки до девятки пик, бэла")
+        // Без значков масти текст не меняется: ни числа, ни буквы достоинств в словах.
+        let plain = "Сдача 10 · Дама, Туз и 110 очков, В меню"
+        XCTAssertEqual(Narrator.spoken(plain), plain)
+    }
+
+    func testSpokenCardsAndMelds() {
+        XCTAssertEqual(Narrator.spokenCard(Card(.queen, .hearts)), "дама червей")
+        XCTAssertEqual(Narrator.spokenCard(Card(.ten, .diamonds)), "десятка бубен")
+        XCTAssertEqual(Narrator.spokenMeld(Meld(suit: .spades, low: .nine, length: 3), rules: .house), "терц от девятки до валета пик")
+        var hundred = RuleSet.house
+        hundred.hundredForFive = true
+        XCTAssertEqual(Narrator.spokenMeld(Meld(suit: .clubs, low: .ten, length: 5), rules: hundred), "сотня от десятки до туза треф")
+        for card in Card.deck {
+            XCTAssertEqual(Narrator.spoken(card.description), Narrator.spokenCard(card))
+        }
+    }
+
+    // MARK: - Род манеры
+
+    func testStyleTitlesAgreeWithGender() {
+        XCTAssertEqual(BotStyle.cautious.title(feminine: true), "Осторожная")
+        XCTAssertEqual(BotStyle.balanced.title(feminine: true), "Ровная")
+        XCTAssertEqual(BotStyle.bold.title(feminine: true), "Рисковая")
+        for style in BotStyle.allCases {
+            XCTAssertEqual(style.title(feminine: false), style.title, "Прежнее title — мужской род")
+        }
+        let vera = Persona.byID("vera")
+        XCTAssertEqual(vera.map { $0.style.title(feminine: $0.feminine) }, "Осторожная")
+    }
+
     func testOutcomeNotesForBaitAndPenalty() throws {
         var match = Match(playerCount: 2, names: ["Вы", "Саша"], rules: .house, seed: 9)
         match.startNextDeal()
