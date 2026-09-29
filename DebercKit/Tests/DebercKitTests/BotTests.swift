@@ -236,8 +236,9 @@ final class BotTests: XCTestCase {
     func testForcedDealAwareness() throws {
         let expert = Bot(level: .expert)
         // [правило: (кто играет на обязах, сдвиг первого говорящего, сдвиг сдающего)]
+        // Знак — от того, кто играет; вес — от места: пас сдающего окончательный (1), первого — нет (0,8).
         let expected: [RuleSet.ForcedPlayer: (seat: Int, first: Double, dealer: Double)] = [
-            .afterDealer: (0, Bot.forcedPassValue, -0.8 * Bot.forcedPassValue),
+            .afterDealer: (0, 0.8 * Bot.forcedPassValue, -Bot.forcedPassValue),
             .dealer: (1, -0.8 * Bot.forcedPassValue, Bot.forcedPassValue),
         ]
         for player in RuleSet.ForcedPlayer.allCases {

@@ -390,11 +390,14 @@ public struct Bot: Sendable {
 
     /// Вдвоём при угрозе «обязов» пас стоит не ноль: если после «все пас» втёмную играть
     /// сопернику — пас выгоден (≈ +30 нам), а если нам — пас обходится дорого.
-    /// Кто играет на обязах, решает правило (`SeatView.forcedSeatIfAllPass`).
+    /// Кто играет на обязах, решает правило (`SeatView.forcedSeatIfAllPass`) — от него знак.
+    /// Величина — от места в торговле: сдающий говорит последним, его пас точно даёт «все пас»
+    /// (полный вес); пас первого говорящего сработает, только если спасует и сдающий (0,8).
     /// Втроём замеры пользы не показали — там порог не меняется.
     func forcedShift(_ v: SeatView) -> Double {
         guard config.forcedAware, v.playerCount == 2, let forced = v.forcedSeatIfAllPass else { return 0 }
-        return forced == v.seat ? -0.8 * Bot.forcedPassValue : Bot.forcedPassValue
+        let weight = v.seat == v.dealer ? 1.0 : 0.8
+        return (forced == v.seat ? -weight : weight) * Bot.forcedPassValue
     }
 
     /// Во сколько очков обходится сдача «на обязах» играющему (вдвоём, замер на самоигре).
