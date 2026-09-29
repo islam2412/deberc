@@ -20,6 +20,8 @@
 - Партия сохраняется: можно выйти и продолжить позже.
 - Без интернета, рекламы и регистрации. Ничего не собирает ([политика конфиденциальности](PRIVACY.md)).
 
+Вопрос или ошибка — пишите на islamytchaev@gmail.com, что приложить — в [SUPPORT.md](SUPPORT.md).
+
 Работает на iOS и iPadOS 16.4 и новее: iPhone 8 и новее, iPad 5-го поколения и новее.
 
 Полный свод правил — в [RULES.md](RULES.md).
@@ -32,10 +34,10 @@
 | `Deberc/` | Приложение на SwiftUI (iPhone и iPad). |
 | `Deberc.xcodeproj` | Проект Xcode (нужен Xcode 26 или новее). |
 | `Config/Deberc.xcconfig` | Team ID, Bundle ID, версия и номер сборки. |
-| `Config/Info.plist` | Экран запуска; остальные ключи Info.plist Xcode собирает из настроек проекта. |
+| `Config/Info.plist` | Экран запуска и одно окно на iPad; остальные ключи Info.plist Xcode собирает из настроек проекта. |
 | `.github/workflows/` | CI, загрузка в TestFlight, турнир ботов, скриншоты для App Store. |
-| `scripts/` | Проверка на симуляторе, App Store Connect API (`asc.py`), иконка, иллюстрации (`prepare_art.py`), картинка для README. |
-| `docs/` | Инструкция по TestFlight, тексты для App Store Connect, откуда иллюстрации ([ART.md](docs/ART.md)). |
+| `scripts/` | Проверка на симуляторе, App Store Connect API (`asc.py`), иконка, иллюстрации (`prepare_art.py`), скриншоты для App Store (`appstore-shots.sh`, `frame-shots.py`), картинка для README. |
+| `docs/` | Инструкция по TestFlight, тексты и подписи к скриншотам для App Store Connect, откуда иллюстрации ([ART.md](docs/ART.md)). |
 
 ## Запуск на своём iPhone/iPad
 
@@ -69,15 +71,16 @@ scripts/simulator-smoke-test.sh run build/DerivedData/Build/Products/Debug-iphon
 
 Параметры проверки (устройства, сценарии, размер шрифта) описаны в начале `scripts/simulator-smoke-test.sh`.
 
-**Скрипты:** `python3 -m unittest discover -s scripts/tests` (для `asc.py` нужен `pip install -r scripts/requirements.txt`).
+**Скрипты:** `python3 -m unittest discover -s scripts/tests` (для `asc.py` и `frame-shots.py` нужен `pip install -r scripts/requirements.txt`).
 
-## Иконка и картинка для README
+## Иконка, картинка для README и скриншоты
 
 - Иконка — валет пик и рубашка с орнаментом на сукне, карты нарисованы по той же геометрии, что в игре. Три варианта (обычная, тёмная, тонированная): `python3 scripts/icon/render_kchr_icon.py install jack-back` (нужны Pillow и исходники в `art-raw/`, см. [ART.md](docs/ART.md)).
 - `docs/preview.png` собирает `scripts/make-preview.py` из скриншотов. Workflow «Скриншоты для App Store» делает это сам: картинка лежит в артефакте `preview`.
+- Скриншоты для App Store с подписями: `scripts/appstore-shots.sh` снимает кадры на симуляторе, `scripts/frame-shots.py` кладёт их на сукно под подписи из `docs/appstore/ru/captions.txt` (подробно — в [APP_STORE_CONNECT.md](docs/APP_STORE_CONNECT.md)).
 
 ## TestFlight
 
 Пошаговая инструкция, как выложить приложение в публичный TestFlight: [docs/TESTFLIGHT.md](docs/TESTFLIGHT.md).
 Тексты и настройки для App Store Connect: [docs/APP_STORE_CONNECT.md](docs/APP_STORE_CONNECT.md).
-Политика конфиденциальности: [PRIVACY.md](PRIVACY.md).
+Политика конфиденциальности: [PRIVACY.md](PRIVACY.md). Поддержка: [SUPPORT.md](SUPPORT.md).
