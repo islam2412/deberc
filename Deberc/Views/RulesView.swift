@@ -43,7 +43,7 @@ struct RulesView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     ShareLink(item: RulesShareText.text(for: shown),
-                              subject: Text("Деберц — наши правила"),
+                              subject: Text(RulesShareText.title(for: shown)),
                               message: Text("Правила, по которым мы играем в деберц")) {
                         Label("Поделиться", systemImage: "square.and.arrow.up")
                     }
@@ -55,8 +55,13 @@ struct RulesView: View {
 
 /// Правила обычным текстом — для «Сообщений», WhatsApp и Telegram (без разметки Markdown).
 enum RulesShareText {
+    /// «Деберц — домашние правила»; изменённые правила так не назвать — «Деберц — правила партии».
+    static func title(for rules: RuleSet) -> String {
+        rules == .house ? "Деберц — \(RulesText.houseTitle.lowercased())" : "Деберц — правила партии"
+    }
+
     static func text(for rules: RuleSet) -> String {
-        var lines = ["Деберц — наши правила", ""]
+        var lines = [title(for: rules), ""]
         for section in RulesText.sections(for: rules) {
             lines.append(section.title.uppercased())
             for item in section.items {
@@ -164,8 +169,12 @@ private struct CardPointsCard: View {
     }
 }
 
-/// Что значат значки на столе.
+/// «Как ходить» и «Значки на столе». Пункты про касание и автоход собраны из настроек игрока:
+/// с выключенным «Ходом в два касания» не обещаем «коснитесь ещё раз», с выключенным автоходом —
+/// что последняя карта ходит сама.
 struct TableIconsLegend: View {
+    @EnvironmentObject private var store: GameStore
+
     private struct Item: Identifiable {
         /// Значок SF Symbols или, если nil, золотая плашка с текстом `tag`.
         let icon: String?
@@ -174,25 +183,65 @@ struct TableIconsLegend: View {
         var id: String { icon ?? tag ?? text }
     }
 
-    private let items: [Item] = [
-        Item(icon: "hand.tap", text: "Ход: коснитесь карты — она приподнимется, коснитесь ещё раз — сходите. Или бросьте карту пальцем вверх, к центру стола: отпустите у руки — вернётся. Можно вести пальцем по руке."),
-        Item(icon: "wand.and.stars", text: "Автоход: последняя карта сдачи ходит сама. В настройках можно выключить или включить автоход для любой вынужденной карты."),
-        Item(icon: "star.fill", text: "Золотая звёздочка в углу карты — козырь."),
-        Item(icon: "sparkles", text: "Золотое свечение вокруг карты — ею можно ходить."),
-        Item(icon: nil, tag: "сдаёт", text: "Метка у игрока — он сдаёт эту сдачу."),
-        Item(icon: "circle.dashed", text: "Золотая дуга вокруг аватара — соперник думает."),
-        Item(icon: "rectangle.stack", text: "Колода лежит у левого края стола: из-под неё выглядывает открытая карта, ниже — «низ», нижняя карта колоды (её показывают только для сведения)."),
-        Item(icon: "text.line.last.and.arrowtriangle.forward", text: "Вдоль правого края стола — до скольких очков идёт партия и сколько очков висит."),
-        Item(icon: "person.crop.circle", text: "Коснитесь соперника — его характер, уровень и ваши партии с ним."),
-        Item(icon: "lightbulb", text: "Подсказка — совет сильного игрока: как торговаться, менять ли семёрку, чем ходить."),
-        Item(icon: "arrow.uturn.backward", text: "Отменить ход — можно вернуть только последний свой ход или заявку, на один шаг назад, пока сдача не закончилась."),
-        Item(icon: "eye", text: "Последняя взятка — можно посмотреть, что в неё легло."),
-        Item(icon: "pause.circle", text: "Висячие очки достанутся тому, кто наберёт больше всех в следующей сдаче."),
-    ]
+    private var moveItems: [Item] {
+        let settings = store.settings
+        return [
+            Item(icon: "hand.tap", text: settings.confirmCardTap
+                 ? "Ход: коснитесь карты — она приподнимется, коснитесь ещё раз — сходите (настройка «Ход в два касания»)."
+                 : "Ход: коснитесь карты — сразу ход. Чтобы сначала приподнимать карту, включите в настройках «Ход в два касания»."),
+            Item(icon: "arrow.up", text: "Или потяните карту пальцем вверх, к центру стола, и отпустите — ход сразу. Отпустите у самой руки — карта вернётся."),
+            Item(icon: "hand.draw", text: "Ведите пальцем по руке — карта под пальцем приподнимается, её лучше видно. В свой ход отпустите палец — эта карта останется выбранной."),
+            Item(icon: "hand.point.up.left", text: "Подержите палец на карте — она покажется крупно. Хода при этом не будет."),
+            Item(icon: "wand.and.stars", text: autoPlayText(settings.autoPlay)),
+            Item(icon: "arrow.uturn.backward", text: "«Отменить» возвращает только что сделанный ход или заявку — пока соперник не ответил. Заявку, после которой раздали прикуп, и вынужденную карту отменить нельзя."),
+            Item(icon: "lightbulb", text: "Подсказка — совет сильного игрока: как торговаться, менять ли семёрку, чем ходить."),
+        ]
+    }
+
+    private var tableItems: [Item] {
+        [
+            Item(icon: "star.fill", text: "Золотая звёздочка в углу карты — козырь."),
+            Item(icon: "sparkles", text: "Золотое свечение вокруг карты — ею можно ходить."),
+            Item(icon: "seal", text: "Крупная «печать» в центре стола — назначен козырь или объявлены комбинации: какие и у кого старше."),
+            Item(icon: nil, tag: "сдаёт", text: "Метка у игрока — он сдаёт эту сдачу."),
+            Item(icon: "circle.dashed", text: "Золотая дуга вокруг аватара — соперник думает."),
+            Item(icon: "person.crop.circle", text: "Коснитесь соперника — его характер, уровень и ваши партии с ним."),
+            Item(icon: "bubble.left", text: banterText(store.settings.banter)),
+            Item(icon: "rectangle.stack", text: "Колода лежит у левого края стола: из-под неё выглядывает открытая карта, ниже — «низ», нижняя карта колоды (её показывают только для сведения)."),
+            Item(icon: "text.line.last.and.arrowtriangle.forward", text: "Вдоль правого края стола — номер сдачи, до скольких очков идёт партия, сколько очков висит или сколько было пересдач подряд."),
+            Item(icon: "eye", text: "Коснитесь стопки взяток — покажется последняя взятка: что в неё легло."),
+            Item(icon: "pause.circle", text: "Висячие очки достанутся тому, кто наберёт больше всех в следующей сдаче."),
+            Item(icon: "paintpalette", text: "Рубашку карт, четырёхцветную колоду и крупный режим выбирают в Настройках → Вид."),
+        ]
+    }
+
+    private func autoPlayText(_ mode: AutoPlay) -> String {
+        switch mode {
+        case .lastCard:
+            return "Автоход: последняя карта сдачи ходит сама. В настройках его можно выключить или включить для любой вынужденной карты."
+        case .onlyCard:
+            return "Автоход: когда ходить можно только одной картой, она ходит сама. Это можно поменять в настройках."
+        case .off:
+            return "Автоход выключен: все карты кладёте вы сами. В настройках можно включить — тогда последняя карта сдачи будет ходить сама."
+        }
+    }
+
+    private func banterText(_ level: BanterLevel) -> String {
+        level == .off
+            ? "Реплики соперников выключены. Включить весёлые подначки у аватара можно в настройках."
+            : "Соперники иногда подшучивают — реплика появляется у аватара. Как часто — настройка «Реплики соперников», там же их можно выключить."
+    }
 
     var body: some View {
+        VStack(spacing: 16) {
+            card(title: "Как ходить", items: moveItems)
+            card(title: "Значки на столе", items: tableItems)
+        }
+    }
+
+    private func card(title: String, items: [Item]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Значки на столе")
+            Text(title)
                 .font(.title3.weight(.bold))
                 .foregroundStyle(Theme.gold)
                 .accessibilityAddTraits(.isHeader)
