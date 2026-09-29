@@ -14,6 +14,11 @@ struct DebercApp: App {
                     RootView()
                         .environmentObject(store)
                 }
+            } else if #available(iOS 17, *), LaunchOptions.current.landscape {
+                DemoLandscape {
+                    RootView()
+                        .environmentObject(store)
+                }
             } else {
                 RootView()
                     .environmentObject(store)
@@ -79,5 +84,51 @@ private struct ZoomedCanvas<Content: View>: View {
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
         }
         .ignoresSafeArea()
+    }
+}
+
+/// Снимки iPad в альбомной ориентации (`-DebercOrientation landscape`, только демо-режим).
+/// Симулятор сам не поворачивается, поэтому окно поворачивает приложение. В режиме
+/// «Приложения в окнах» iPadOS 26 система этого не разрешает — тогда приложение раскладывается
+/// в размер экрана, повёрнутого набок, и уменьшается до ширины окна (как `ZoomedCanvas`);
+/// сверху и снизу остаются чёрные поля. На iPhone ничего не делает.
+@available(iOS 17, *)
+private struct DemoLandscape<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    /// Система не повернула окно — альбомный экран рисуем сами.
+    @State private var emulated = false
+
+    var body: some View {
+        Group {
+            if emulated {
+                GeometryReader { geo in
+                    let long = max(geo.size.width, geo.size.height)
+                    let short = min(geo.size.width, geo.size.height)
+                    let scale = geo.size.width / long
+                    content()
+                        // Строка состояния и полоска «Домой» iPad в альбомной ориентации.
+                        .safeAreaPadding(EdgeInsets(top: 24, leading: 0, bottom: 20, trailing: 0))
+                        .frame(width: long, height: short)
+                        .scaleEffect(scale, anchor: .topLeading)
+                        .frame(width: geo.size.width, height: short * scale, alignment: .topLeading)
+                        .frame(width: geo.size.width, height: geo.size.height)
+                }
+                .background(Color.black)
+                .ignoresSafeArea()
+            } else {
+                content()
+            }
+        }
+        .onAppear(perform: rotate)
+    }
+
+    private func rotate() {
+        guard UIDevice.current.userInterfaceIdiom == .pad,
+              let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+        let emulated = $emulated
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { error in
+            Diagnostics.log("Окно не повернулось (\(error.localizedDescription)) — альбомный экран рисуем сами")
+            Task { @MainActor in emulated.wrappedValue = true }
+        }
     }
 }

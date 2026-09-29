@@ -22,9 +22,14 @@ import DebercKit
 ///     -DebercDragPreview YES         в свой ход первая допустимая карта «в пальцах» (снимок броска)
 ///     -DebercHumanDelay MS           автоигра: за человека компьютер ходит не раньше чем через MS мс,
 ///                                    чтобы на снимках были видны кнопки хода
+///     -DebercOrientation landscape   iPad, iOS 17+: альбомная ориентация — приложение само поворачивает окно
+///                                    (симулятор иначе не повернуть), а если система не даёт (режим
+///                                    «Приложения в окнах»), рисует альбомный экран уменьшенным;
+///                                    на iPhone ничего не делает
 ///
 /// Остальные флаги (-DebercLarge, -DebercSpeed, -DebercBanter, -DebercZoom, -DebercScriptedHuman,
-/// -DebercDragPreview, -DebercHumanDelay) действуют только вместе с `-DebercAutoplay` или `-DebercScreen`:
+/// -DebercDragPreview, -DebercHumanDelay, -DebercOrientation) действуют только вместе
+/// с `-DebercAutoplay` или `-DebercScreen`:
 /// настройки игрока они не трогают. -DebercScriptedHuman ходит за человека теми же действиями,
 /// что и касания, — с отменой хода и всем прочим.
 ///
@@ -52,6 +57,8 @@ struct LaunchOptions: Equatable {
     var zoomed = false
     var dragPreview = false
     var scriptedHuman = false
+    /// Альбомная ориентация на iPad (`-DebercOrientation landscape`), только в демо-режиме.
+    var landscape = false
 
     var resume = false
 
@@ -92,6 +99,10 @@ struct LaunchOptions: Equatable {
         }
         if let raw = defaults.string(forKey: "DebercSpeed") {
             speed = GameSpeed(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        }
+        // Поворот — только для снимков: у игрока iPad поворачивается сам.
+        if isDemo, let raw = defaults.string(forKey: "DebercOrientation") {
+            landscape = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "landscape"
         }
     }
 
