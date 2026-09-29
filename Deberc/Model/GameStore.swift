@@ -285,8 +285,9 @@ final class GameStore: ObservableObject {
             cancelHint()
             lastStepWasBot = false
             if !autoplay {
-                undoStack.append(before)
-                if undoStack.count > 30 { undoStack.removeFirst() }
+                // Отменить можно только последнее своё решение — один шаг назад.
+                // Автоход (вынужденная карта) решением не считается: его не отменить.
+                undoStack = byUser ? [before] : []
             }
             withAnimation(animation(.spring(response: 0.35, dampingFraction: 0.82))) {
                 selectedCard = nil
@@ -334,10 +335,13 @@ final class GameStore: ObservableObject {
     }
 
     /// Бросок карты на стол (и действие VoiceOver «Сходить»): лежащая взятка сначала соберётся сама.
-    func throwCard(_ card: Card) {
+    /// true — карта ушла на стол.
+    @discardableResult
+    func throwCard(_ card: Card) -> Bool {
         if displayedTrick != nil { collectTrick() }
-        guard isHumanTurn, legalCards.contains(card) else { return }
+        guard isHumanTurn, legalCards.contains(card) else { return false }
         perform(.play(card))
+        return !(match?.deal?.hands[humanSeat].contains(card) ?? true)
     }
 
     /// Выбор карты ведением пальца по руке (nil — снять выбор). Недопустимую карту не поднимает.
@@ -393,7 +397,8 @@ final class GameStore: ObservableObject {
         }
     }
 
-    /// Отменить своё последнее действие (до конца сдачи). Соперники потом могут сыграть иначе.
+    /// Отменить своё последнее действие — один шаг назад, до конца сдачи; второй раз подряд нельзя.
+    /// Соперники потом могут сыграть иначе.
     func undo() {
         // Двойное касание «Отменить» не должно отменять два хода (и сразу отменять только что сделанный).
         guard canUndo, !isRepeatTap, let previous = undoStack.popLast() else { return }

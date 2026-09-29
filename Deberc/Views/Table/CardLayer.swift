@@ -266,7 +266,7 @@ enum CardSprites {
                 if isSelected {
                     rise = 0
                 } else if scene.humanActive && isLegal {
-                    rise = lift * 0.45
+                    rise = lift * 0.5
                 } else {
                     rise = lift
                 }
@@ -282,7 +282,11 @@ enum CardSprites {
                 sprite.showsBottomIndex = index == cards.count - 1
                 sprite.origin = fromStock(width: render, hasFace: true)
                 sprite.delay = Double(index) * 0.05
-                if let drag = scene.drag, drag.card == card, drag.preview {
+                if let drag = scene.drag, drag.card == card, drag.hover {
+                    // Палец на карте: чуть выше соседей и чуть крупнее — видно, какая под пальцем.
+                    sprite.position.y -= lift * 0.45
+                    sprite.scale = scale * 1.03
+                } else if let drag = scene.drag, drag.card == card, drag.preview {
                     // Карту рассматривают: крупно, ровно, над серединой руки.
                     let big = min(hw * 1.8, render * 1.3)
                     sprite.position = CGPoint(x: frame.midX, y: frame.minY - big * CardView.aspectRatio * 0.42)

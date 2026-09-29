@@ -153,9 +153,12 @@ struct TableDecorations: View {
     @ViewBuilder
     private var trickNotes: some View {
         if let center = frames[.center], let point = winnerCaptionPoint(center) {
+            // Подпись — когда последняя карта уже легла, а не пока она летит.
             TrickCaption(text: winnerCaption, prominent: true)
                 .position(point)
-                .transition(.opacity)
+                .transition(.asymmetric(
+                    insertion: .opacity.animation(.easeOut(duration: 0.2).delay(reduceMotion ? 0 : model.flight)),
+                    removal: .opacity.animation(.easeOut(duration: 0.15))))
         }
     }
 

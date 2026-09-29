@@ -119,7 +119,8 @@ struct TableMetrics: Equatable {
         pileCardWidth = roomy ? min(44, max(20, (hand * 0.28).rounded())) : min(26, max(20, (hand * 0.24).rounded()))
     }
 
-    var handLift: CGFloat { (handCardWidth * 0.22).rounded() }
+    /// Насколько приподнимается выбранная карта (на телефоне заметнее: рука уходит за край экрана).
+    var handLift: CGFloat { (handCardWidth * (roomy ? 0.22 : 0.3)).rounded() }
     /// Видимая высота руки: карта (без ушедшей за край части) и подъём выбранной.
     var handHeight: CGFloat { (handCardWidth * CardView.aspectRatio * handVisible + handLift).rounded() }
     /// Карты взятки бывают крупнее карт руки — во сколько раз самое большее.
@@ -176,6 +177,8 @@ struct HandDrag: Equatable {
     var playable: Bool
     /// Долгое нажатие: карту рассматривают — крупно над рукой, ход не делается.
     var preview = false
+    /// Палец просто лежит на карте или ведёт по руке: карта чуть приподнята над соседними.
+    var hover = false
 }
 
 enum HandFan {

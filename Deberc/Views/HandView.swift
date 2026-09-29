@@ -7,7 +7,8 @@ import DebercKit
 /// Управление:
 /// - касание выбирает карту (приподнимает), второе касание по ней — ход;
 ///   без «двойного касания» в настройках первое касание сразу ходит;
-/// - можно вести пальцем по руке: поднимается карта под пальцем, отпускание оставляет её выбранной;
+/// - можно вести пальцем по руке влево-вправо: карта под пальцем чуть приподнимается (любая, и не в свой ход);
+///   в свой ход допустимая карта под пальцем выбирается, отпускание оставляет её выбранной;
 /// - потянуть карту вверх — она идёт за пальцем; бросок или отпускание над рукой — ход,
 ///   карта летит на стол с того места, где её отпустили; отпустить у руки — вернётся на место;
 /// - долгое нажатие — рассмотреть карту крупно (ход не делается);
@@ -88,6 +89,9 @@ struct HandView: View {
                 if hypot(value.translation.width, value.translation.height) > 8 {
                     pressTask?.cancel()
                 }
+                if liftedCard == nil {
+                    hover(card(at: value.location.x, centers))
+                }
                 if let card = liftedCard {
                     follow(card, translation: value.translation)
                     return
@@ -139,7 +143,21 @@ struct HandView: View {
                     }
                 }
                 // Иначе — вели пальцем: выбранная карта остаётся приподнятой.
+
+                // Палец ушёл — приподнятая «под пальцем» карта опускается. После хода: если карта уже
+                // на столе, это ничего не меняет, а раньше хода — карта на миг провалилась бы к руке.
+                if drag?.hover == true {
+                    withAnimation(.easeOut(duration: 0.15)) { drag = nil }
+                }
             }
+    }
+
+    /// Карта под пальцем чуть приподнимается (nil — палец ушёл с руки).
+    private func hover(_ card: Card?) {
+        guard drag?.card != card || drag?.hover != true else { return }
+        withAnimation(.easeOut(duration: 0.12)) {
+            drag = card.map { HandDrag(card: $0, translation: .zero, playable: false, hover: true) }
+        }
     }
 
     /// Палец задержался на карте — показать её крупно.
@@ -178,10 +196,17 @@ struct HandView: View {
             if thrown { store.tapCard(card) }
             return
         }
-        // Карта летит на стол с того места, где её отпустили.
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.84)) {
-            drag = nil
+        // Карта летит на стол с того места, где её отпустили. Сначала ход, потом сброс «карты в пальцах»:
+        // если сбросить раньше, карта на кадр вернётся к руке и полетит на стол с «провалом».
+        let played = withAnimation(.spring(response: 0.34, dampingFraction: 0.84)) {
             store.throwCard(card)
+        }
+        if played {
+            var quiet = Transaction()
+            quiet.disablesAnimations = true
+            withTransaction(quiet) { drag = nil }
+        } else {
+            withAnimation(.spring(response: 0.32, dampingFraction: 0.7)) { drag = nil }
         }
     }
 
