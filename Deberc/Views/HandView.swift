@@ -36,6 +36,8 @@ struct HandView: View {
     static let pressDelay: TimeInterval = 0.5
     /// Сдвиг пальца больше этого — не касание (и не просмотр): вели пальцем.
     static let tapSlop: CGFloat = 12
+    /// Палец ушёл вверх больше чем на столько — карта «взята» и идёт за пальцем.
+    static let liftThreshold: CGFloat = 20
 
     /// Палец на руке. Сбрасывается сам и тогда, когда система отменила касание без `onEnded`.
     @GestureState private var touching = false
@@ -131,7 +133,8 @@ struct HandView: View {
                 let origin = anchor ?? value.startLocation
                 let up = origin.y - value.location.y
                 let across = abs(value.location.x - origin.x)
-                if up > 12 && up > across * 0.8, let card = anchorCard ?? startCard {
+                // Порог повыше дрожания пальца: карту «берут» уверенным движением вверх.
+                if up > Self.liftThreshold && up > across, let card = anchorCard ?? startCard {
                     // Палец пошёл вверх — карта под ним «взята» и идёт за пальцем от точки, где её взяли.
                     liftedCard = card
                     liftOrigin = origin
