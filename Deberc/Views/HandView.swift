@@ -333,6 +333,7 @@ struct HandView: View {
             .accessibilityElement()
             .accessibilityLabel(spokenName(card))
             .accessibilityValue(spokenState(card, isSelected: isSelected))
+            .accessibilityHint(spokenHint(card, isSelected: isSelected))
             .accessibilityAddTraits(traits)
             .accessibilityAction { store.tapCard(card) }
             .accessibilityAction(named: "Сходить") { playNow(card) }
@@ -346,6 +347,13 @@ struct HandView: View {
     private func spokenState(_ card: Card, isSelected: Bool) -> String {
         guard isActive else { return "" }
         if !legal.contains(card) { return "сейчас ходить нельзя" }
-        return isSelected ? "выбрана, коснитесь ещё раз, чтобы сходить" : ""
+        return isSelected ? "выбрана" : ""
+    }
+
+    /// Что сделает двойное касание VoiceOver (обычное касание под VoiceOver только наводит фокус).
+    private func spokenHint(_ card: Card, isSelected: Bool) -> String {
+        guard isActive, legal.contains(card) else { return "" }
+        if isSelected || !store.settings.confirmCardTap { return "Коснитесь дважды, чтобы сходить" }
+        return "Коснитесь дважды, чтобы выбрать, или выберите действие «Сходить»"
     }
 }

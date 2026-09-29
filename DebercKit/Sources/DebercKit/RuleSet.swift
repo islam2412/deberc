@@ -115,6 +115,9 @@ public struct RuleSet: Codable, Equatable, Sendable {
     // MARK: Ход
     public var mustTrump = true
     public var overtrump = Overtrump.never
+    /// Правило «перебивать» по-настоящему: без обязанности бить козырем перебивать тоже не нужно
+    /// (так и написано в правилах; сам выбор в настройках при этом сохраняется).
+    public var effectiveOvertrump: Overtrump { mustTrump ? overtrump : .never }
 
     // MARK: Подсчёт
     public var baitTransfer = BaitTransfer.toOpponent

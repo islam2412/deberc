@@ -50,12 +50,24 @@ final class SolverTests: XCTestCase {
     }
 
     func testMatchesBruteForce() {
-        var rng = SplitMix64(seed: 2026)
-        let solver = TwoPlayerSolver(tableBits: 12)
         var variants = RuleSet.house
         variants.overtrump = .trumpLeadOnly
-        for iteration in 0..<600 {
-            let rules = iteration % 3 == 0 ? variants : RuleSet.house
+        compareWithBruteForce(seed: 2026, iterations: 600) { $0 % 3 == 0 ? variants : RuleSet.house }
+    }
+
+    /// Без обязанности козырять «перебивать на ход с козыря» не действует — и в решателе тоже.
+    func testMatchesBruteForceWithoutTrumpObligation() {
+        var loose = RuleSet.house
+        loose.mustTrump = false
+        loose.overtrump = .trumpLeadOnly
+        compareWithBruteForce(seed: 2027, iterations: 200) { _ in loose }
+    }
+
+    private func compareWithBruteForce(seed: UInt64, iterations: Int, rules pick: (Int) -> RuleSet) {
+        var rng = SplitMix64(seed: seed)
+        let solver = TwoPlayerSolver(tableBits: 12)
+        for iteration in 0..<iterations {
+            let rules = pick(iteration)
             var deck = Card.deck
             deck.shuffle(using: &rng)
             let k = 1 + Int(rng.next() % 6)

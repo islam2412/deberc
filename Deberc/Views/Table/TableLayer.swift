@@ -57,6 +57,7 @@ struct TableDecorations: View {
     let size: CGSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.cardAppearance) private var appearance
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var scene: TableScene { model.scene }
     private var deal: Deal { scene.deal }
@@ -111,7 +112,9 @@ struct TableDecorations: View {
     @ViewBuilder
     private func seatNote(_ seat: Int) -> some View {
         if let area = seatArea(seat) {
-            place(noteRect(seat, area: area), noteAlignment(seat)) {
+            let note = noteRect(seat, area: area)
+            let chatter = chatterRect(note: note)
+            place(chatter, noteAlignment(seat)) {
                 VStack(spacing: 6) {
                     ZStack {
                         if let text = model.bubbles[seat] {
@@ -127,8 +130,12 @@ struct TableDecorations: View {
                             .transition(noteTransition)
                         }
                     }
+                    // Заявки и отметки — в своём месте, даже когда подначке отдана вся ширина стола.
+                    .frame(width: chatter == note ? nil : note.width)
+                    .offset(x: note.midX - chatter.midX)
                     // Подначка — своим облачком, под репликой торговли (если та ещё видна).
-                    if let taunt = model.taunt, taunt.seat == seat {
+                    if let taunt = model.taunt, taunt.seat == seat,
+                       !tauntCoversTrick(taunt, width: chatter.width) {
                         SpeechBubble(text: taunt.text, chatter: true)
                             .id("taunt-\(taunt.id)")
                             .transition(noteTransition)
@@ -160,6 +167,24 @@ struct TableDecorations: View {
         let minX = m.gutter - 4
         let maxX = size.width - m.gutter + 4 - width
         return CGRect(x: max(minX, min(maxX, x)), y: area.maxY + 6, width: width, height: 120)
+    }
+
+    /// Место под подначку. Вдвоём — вся ширина стола: в 240 pt шутка переносится на две строки
+    /// и закрывает верх карты соперника во взятке. Втроём — то же, что под заявки.
+    private func chatterRect(note: CGRect) -> CGRect {
+        guard scene.playerCount == 2 else { return note }
+        let m = scene.metrics
+        return CGRect(x: m.gutter - 4, y: note.minY, width: max(note.width, size.width - 2 * m.gutter + 8),
+                      height: note.height)
+    }
+
+    /// Вдвоём шутка не помещается в строку, а карта соперника лежит во взятке: облачко закрыло бы её.
+    /// Такую подначку показываем после сбора взятки (если она к тому времени не погасла).
+    private func tauntCoversTrick(_ taunt: TableTaunt, width: CGFloat) -> Bool {
+        guard scene.playerCount == 2 else { return false }
+        let trick = scene.displayedTrick ?? deal.currentTrick
+        guard trick.card(of: taunt.seat) != nil else { return false }
+        return TableTextMetrics(typeSize: typeSize).width(taunt.text, .label) + 24 > width
     }
 
     private var noteTransition: AnyTransition {

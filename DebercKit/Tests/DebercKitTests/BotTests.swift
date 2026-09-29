@@ -550,6 +550,32 @@ final class BotTests: XCTestCase {
     }
 
     /// Вдвоём альфа-бета даёт то же значение, что полный перебор.
+    /// Быстрая модель розыгрыша разрешает те же карты, что и правила, при любых «козырять» и «перебивать».
+    func testSimulatorLegalMovesMatchRules() {
+        var rng = SplitMix64(seed: 77)
+        for iteration in 0..<600 {
+            var rules = RuleSet.house
+            rules.mustTrump = iteration % 2 == 0
+            rules.overtrump = RuleSet.Overtrump.allCases[(iteration / 2) % RuleSet.Overtrump.allCases.count]
+            var deck = Card.deck
+            deck.shuffle(using: &rng)
+            let trump = Int(rng.next() % 4)
+            let seat = Int(rng.next() % 3)
+            let trick = Array(deck[0..<seat])
+            let hand = Array(deck[seat..<(seat + 1 + Int(rng.next() % 8))])
+            let ctx = SimContext(rules: rules, playerCount: 3, trump: trump, bidder: 0, priority: [1, 2, 0],
+                                 meldWinner: -1, meldPoints: 0, bellaSeat: -1,
+                                 pot: 0, baitCounts: [0, 0, 0], nakedCounts: [0, 0, 0])
+            var hands = [UInt32](repeating: 0, count: 3)
+            hands[seat] = mask(of: hand)
+            let state = SimState(hands: hands, turn: seat, cardPoints: [0, 0, 0], tricks: [0, 0, 0],
+                                 played: mask(of: trick), tricksLeft: hand.count,
+                                 trick: trick.enumerated().map { (seat: $0.offset, card: $0.element.id) }, ctx: ctx)
+            let want = PlayRules.legalCards(hand: hand, trick: trick, trump: Suit(rawValue: trump)!, rules: rules)
+            XCTAssertEqual(state.legalMask(ctx), mask(of: want), "взятка \(trick), рука \(hand), итерация \(iteration)")
+        }
+    }
+
     func testAlphaBetaMatchesFullSearch() throws {
         var checked = 0
         for seed in 0..<12 {

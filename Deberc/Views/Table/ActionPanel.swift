@@ -58,21 +58,14 @@ struct ActionPanel: View {
     private var roundOne: some View {
         let suit = deal.openCard.suit
         return VStack(spacing: 6) {
-            // Слово «Беру» не должно пропадать: на узком экране с крупным шрифтом сначала уходит
-            // название масти, потом «Пас» с подсказкой переезжают во второй ряд.
+            // Слово «Беру» не должно пропадать: на узком экране с крупным шрифтом сначала лампочка
+            // теряет подпись, потом уходит название масти, потом «Пас» с подсказкой переезжают во второй ряд.
             // В ряду «Беру» забирает всё свободное место, «Пас» — по ширине слова: поровну делить нельзя,
             // иначе длинная надпись «Беру ♣ трефы» обрезается, хотя ряд целиком помещается.
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    takeButton(suit, named: true)
-                    passButton(fill: false)
-                    hintButton
-                }
-                HStack(spacing: 10) {
-                    takeButton(suit, named: false)
-                    passButton(fill: false)
-                    hintButton
-                }
+                takeRow(suit, named: true, hint: .captioned)
+                takeRow(suit, named: true, hint: .icon)
+                takeRow(suit, named: false, hint: .icon)
                 VStack(spacing: 8) {
                     takeButton(suit, named: true)
                     HStack(spacing: 10) {
@@ -82,6 +75,14 @@ struct ActionPanel: View {
                 }
             }
             prompt(store.bidHint ?? "Берёте? Козырь — \(suit.name)")
+        }
+    }
+
+    private func takeRow(_ suit: Suit, named: Bool, hint look: HintLook) -> some View {
+        HStack(spacing: 10) {
+            takeButton(suit, named: named)
+            passButton(fill: false)
+            hintButton(look)
         }
     }
 
@@ -109,17 +110,15 @@ struct ActionPanel: View {
         let suits = Suit.allCases.filter { $0 != deal.openCard.suit }
         return VStack(spacing: 6) {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    ForEach(suits, id: \.self) { suit in
-                        suitButton(suit)
-                    }
-                    passButton()
-                    hintButton
-                }
-                .fixedSize(horizontal: true, vertical: false)
+                suitRow(suits, hint: .captioned)
+                suitRow(suits, hint: .icon)
                 HStack(spacing: 10) {
                     suitGrid(suits)
                     hintButton
+                }
+                HStack(spacing: 10) {
+                    suitGrid(suits)
+                    hintButton(.icon)
                 }
                 // Узкий экран с крупным текстом: мастям — вся ширина; подсказка остаётся в меню стола
                 // (лишний ряд кнопок сжал бы стол так, что открытая карта стала бы с ноготь).
@@ -130,6 +129,17 @@ struct ActionPanel: View {
                 prompt(hint)
             }
         }
+    }
+
+    private func suitRow(_ suits: [Suit], hint look: HintLook) -> some View {
+        HStack(spacing: 10) {
+            ForEach(suits, id: \.self) { suit in
+                suitButton(suit)
+            }
+            passButton()
+            hintButton(look)
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     @ViewBuilder
@@ -189,21 +199,26 @@ struct ActionPanel: View {
     private var exchange: some View {
         VStack(spacing: 6) {
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    exchangeButton
-                    keepButton(fill: false)
-                    exchangeTools
-                }
+                exchangeRow(hint: .captioned)
+                exchangeRow(hint: .icon)
                 // Тесно — «Взять … за 7» во всю ширину, остальное — вторым рядом.
                 VStack(spacing: 8) {
                     exchangeButton
                     HStack(spacing: 10) {
                         keepButton()
-                        exchangeTools
+                        hintButton
                     }
                 }
             }
             prompt(store.bidHint ?? "У вас козырная семёрка — поменять на открытую карту?")
+        }
+    }
+
+    private func exchangeRow(hint look: HintLook) -> some View {
+        HStack(spacing: 10) {
+            exchangeButton
+            keepButton(fill: false)
+            hintButton(look)
         }
     }
 
@@ -223,7 +238,8 @@ struct ActionPanel: View {
         }
         .buttonStyle(TableButtonStyle(prominent: true))
         .modifier(HintRing(active: store.hintAction == .exchangeSeven(true)))
-        .accessibilityLabel("Поменять козырную семёрку на \(CardView.spokenName(open))")
+        .accessibilityLabel("Взять \(CardView.spokenName(open)) за козырную семёрку")
+        .accessibilityInputLabels(["Взять", "Поменять"])
     }
 
     private func keepButton(fill: Bool = true) -> some View {
@@ -240,22 +256,13 @@ struct ActionPanel: View {
         .accessibilityLabel("Оставить семёрку")
     }
 
-    /// Отмена ошибочного «Беру» (значком — ряд и так тесный) и подсказка.
-    @ViewBuilder
-    private var exchangeTools: some View {
-        if store.canUndo {
-            undoButton(compact: true)
-        }
-        hintButton
-    }
-
     private var playing: some View {
         HStack(spacing: 10) {
             statusLines(title: "Ваш ход", titleColor: Theme.gold, subtitle: playSubtitle)
             if store.canUndo {
                 undoButton()
             }
-            hintButton(labeled: true)
+            hintButton(.labeled)
         }
     }
 
@@ -296,23 +303,32 @@ struct ActionPanel: View {
             : "Коснитесь карты — сразу ход"
     }
 
-    private var hintButton: some View { hintButton(labeled: false) }
+    /// Вид кнопки совета: словом, значком с подписью (тесные ряды торговли) или одним значком
+    /// (совсем тесно — лишь бы «Беру ♣ трефы» и ряд в одну строку уцелели).
+    private enum HintLook {
+        case labeled, captioned, icon
+    }
 
-    /// «Совет»: словом, если в ряду есть место (в тесных рядах торговли — значком).
-    private func hintButton(labeled: Bool) -> some View {
+    private var hintButton: some View { hintButton(.captioned) }
+
+    /// «Совет»: словом, если в ряду есть место; в рядах торговли — значком с подписью.
+    private func hintButton(_ look: HintLook) -> some View {
         Button {
             store.showHint()
         } label: {
             ZStack {
                 Group {
-                    if labeled {
+                    switch look {
+                    case .labeled:
                         ViewThatFits(in: .horizontal) {
                             Label("Совет", systemImage: "lightbulb")
                                 .lineLimit(1)
                                 .fixedSize()
                             Image(systemName: "lightbulb")
                         }
-                    } else {
+                    case .captioned:
+                        captionedLightbulb
+                    case .icon:
                         Image(systemName: "lightbulb")
                     }
                 }
@@ -326,27 +342,45 @@ struct ActionPanel: View {
         }
         .buttonStyle(TableButtonStyle(compact: true))
         .disabled(store.isHinting)
-        .accessibilityLabel("Подсказка")
+        .accessibilityLabel("Совет")
+        .accessibilityInputLabels(["Совет", "Подсказка"])
     }
 
-    /// «Отменить» — словом, если помещается; `compact` — всегда значком.
-    private func undoButton(compact: Bool = false) -> some View {
+    /// Лампочка с мелкой подписью «совет»: один значок непонятен. Место в ряду — как у одного значка
+    /// (по ширине подписи): подпись уходит в поля кнопки, и ряд торговли не становится выше.
+    private var captionedLightbulb: some View {
+        ZStack {
+            Image(systemName: "lightbulb")
+            Text("совет")
+                .font(.caption2.weight(.semibold))
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .hidden()
+        .overlay {
+            VStack(spacing: 0) {
+                Image(systemName: "lightbulb")
+                Text("совет")
+                    .font(.caption2.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .fixedSize()
+        }
+    }
+
+    /// «Отменить» — словом, если помещается, иначе значком.
+    private func undoButton() -> some View {
         Button {
             store.undo()
         } label: {
-            if compact {
+            ViewThatFits(in: .horizontal) {
+                Label("Отменить", systemImage: "arrow.uturn.backward")
+                    .lineLimit(1)
+                    .fixedSize()
                 Image(systemName: "arrow.uturn.backward")
-                    .frame(minWidth: 24)
-            } else {
-                ViewThatFits(in: .horizontal) {
-                    Label("Отменить", systemImage: "arrow.uturn.backward")
-                        .lineLimit(1)
-                        .fixedSize()
-                    Image(systemName: "arrow.uturn.backward")
-                }
             }
         }
-        .buttonStyle(TableButtonStyle(compact: compact))
+        .buttonStyle(TableButtonStyle())
         .accessibilityLabel("Отменить ход")
     }
 
@@ -363,9 +397,9 @@ struct ActionPanel: View {
 
     private var waitingTitle: String? {
         let human = store.humanSeat
-        // Кто взял — написано золотом на самой карте (с «+10» за последнюю); здесь — что делать.
+        // Кто взял — написано золотом на самой карте (с «+10» за последнюю); здесь — что будет дальше.
         if store.displayedTrick != nil {
-            return "Коснитесь стола, чтобы собрать"
+            return "Взятка соберётся сама"
         }
         guard let actor = deal.actor, actor != human else { return nil }
         let name = store.displayName(for: actor)
@@ -373,8 +407,8 @@ struct ActionPanel: View {
     }
 
     private var waitingSubtitle: String? {
-        if let winner = store.displayedTrick?.winner {
-            return winner == store.humanSeat ? "Взятка ваша" : "Взятку берёт \(store.displayName(for: winner))"
+        if store.displayedTrick != nil {
+            return "Коснитесь стола — быстрее"
         }
         switch deal.phase {
         case .bidding, .exchange:

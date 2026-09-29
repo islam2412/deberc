@@ -56,6 +56,23 @@ final class DealFlowTests: XCTestCase {
         XCTAssertEqual(deal.turn, 1, "Первым ходит следующий после сдающего")
     }
 
+    /// Решение об обмене семёрки (любое) открывает чужие комбинации — отменять его нельзя.
+    /// Пас в торговле ничего не открывает, «Беру» — открывает прикуп.
+    func testRevealingEventsAfterExchangeAndBids() throws {
+        for accept in [true, false] {
+            var match = newMatch()
+            match.startDeal(deck: twoPlayerDeck(), dealer: 0)
+            let take = try match.apply(.take)
+            XCTAssertTrue(take.contains { $0.revealsHidden }, "После «Беру» раздают прикуп")
+            let events = try match.apply(.exchangeSeven(accept))
+            XCTAssertTrue(events.contains { $0.revealsHidden }, "обмен: \(accept)")
+        }
+        var match = newMatch()
+        match.startDeal(deck: twoPlayerDeck(), dealer: 0)
+        let pass = try match.apply(.pass)
+        XCTAssertFalse(pass.contains { $0.revealsHidden })
+    }
+
     func testSevenExchangeOnlyForOpenSuit() throws {
         var match = newMatch()
         match.startDeal(deck: twoPlayerDeck(), dealer: 0)

@@ -105,6 +105,17 @@ public enum DealEvent: Equatable, Sendable {
     case dealFinished
 }
 
+public extension DealEvent {
+    /// После события открылось скрытое: прикуп на руках или чужие комбинации.
+    /// Решение, которое к нему привело, отменить нельзя — карты уже видели.
+    var revealsHidden: Bool {
+        switch self {
+        case .prikupDealt, .playStarted: return true
+        default: return false
+        }
+    }
+}
+
 /// Одна сдача: раздача, торговля, обмен семёрки, розыгрыш.
 ///
 /// Сохраняется в партии (JSON). Правило для новых хранимых полей: делать их Optional

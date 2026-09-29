@@ -74,11 +74,11 @@ final class TwoPlayerSolver {
             suitAscending = (0..<4).map { s in (s * 8 ..< s * 8 + 8).sorted { pwr[$0] < pwr[$1] } }
             changed = true
         }
-        let key = (rules.mustTrump ? 1 : 0) | (rules.overtrump != .never ? 2 : 0)
+        let key = (rules.mustTrump ? 1 : 0) | (rules.effectiveOvertrump != .never ? 2 : 0)
         if key != ruleKey {
             ruleKey = key
             mustTrump = rules.mustTrump
-            overtrumpOnTrumpLead = rules.overtrump != .never
+            overtrumpOnTrumpLead = rules.effectiveOvertrump != .never
             changed = true
         }
         if bonus != self.bonus {
