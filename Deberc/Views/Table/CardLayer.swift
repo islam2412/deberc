@@ -262,14 +262,7 @@ enum CardSprites {
             for (index, card) in cards.enumerated() {
                 let isLegal = scene.legal.contains(card)
                 let isSelected = scene.selected == card
-                let rise: CGFloat
-                if isSelected {
-                    rise = 0
-                } else if scene.humanActive && isLegal {
-                    rise = lift * 0.5
-                } else {
-                    rise = lift
-                }
+                let rise = HandFan.rise(selected: isSelected, legal: isLegal, active: scene.humanActive, lift: lift)
                 let arc = HandFan.arc(index: index, count: cards.count, cardWidth: hw)
                 var sprite = CardSprite(id: key(card, zone: "h"), card: card, width: render,
                                         position: CGPoint(x: frame.minX + centers[index],
@@ -283,9 +276,11 @@ enum CardSprites {
                 sprite.origin = fromStock(width: render, hasFace: true)
                 sprite.delay = Double(index) * 0.05
                 if let drag = scene.drag, drag.card == card, drag.hover {
-                    // Палец на карте: чуть выше соседей и чуть крупнее — видно, какая под пальцем.
-                    sprite.position.y -= lift * 0.45
-                    sprite.scale = scale * 1.03
+                    // Палец на карте: чуть выше соседей и чуть крупнее — видно, какая под пальцем
+                    // (недопустимая в ваш ход — едва-едва, чтобы не спорить с подсветкой допустимых).
+                    let hover = HandFan.hoverRise(legal: isLegal, active: scene.humanActive, lift: lift)
+                    sprite.position.y -= hover
+                    sprite.scale = scale * (hover > lift * 0.3 ? 1.03 : 1)
                 } else if let drag = scene.drag, drag.card == card, drag.preview {
                     // Карту рассматривают: крупно, ровно, над серединой руки.
                     let big = min(hw * 1.8, render * 1.3)

@@ -186,6 +186,8 @@ struct TableScreen: View {
         .overlayPreferenceValue(TableSlotKey.self) { anchors in
             TableLayerHost(anchors: anchors, model: layerModel)
         }
+        // Новая сдача — никакой карты «в пальцах» от прошлой.
+        .onChange(of: match.dealCount) { _ in drag = nil }
     }
 
     // MARK: Колонка стола

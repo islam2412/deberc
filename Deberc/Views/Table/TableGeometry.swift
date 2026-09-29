@@ -222,7 +222,41 @@ enum HandFan {
         return result
     }
 
-    /// Карта под пальцем: самая верхняя (правая) из тех, чья левая кромка левее точки.
+    /// Насколько карта руки опущена от верха области руки: выбранная — наверху, допустимые в ваш ход —
+    /// на полподъёма ниже, остальные — на весь подъём. Одна формула и для рисования, и для касаний.
+    static func rise(selected: Bool, legal: Bool, active: Bool, lift: CGFloat) -> CGFloat {
+        if selected { return 0 }
+        return active && legal ? lift * 0.5 : lift
+    }
+
+    /// Насколько выше поднимается карта под пальцем (недопустимая в ваш ход — едва-едва).
+    static func hoverRise(legal: Bool, active: Bool, lift: CGFloat) -> CGFloat {
+        active && !legal ? lift * 0.15 : lift * 0.45
+    }
+
+    /// Карта под точкой касания — по видимым картам: с их подъёмом и наклоном веера, сверху вниз.
+    /// `tops[i]` — верхняя кромка карты i от верха области руки. Мимо всех карт — ближайшая по x.
+    static func index(at point: CGPoint, centers: [CGFloat], tops: [CGFloat], cardWidth w: CGFloat) -> Int? {
+        let n = centers.count
+        guard n > 0, tops.count == n else { return index(at: point.x, centers: centers, cardWidth: w) }
+        let h = w * CardView.aspectRatio
+        for i in stride(from: n - 1, through: 0, by: -1) {
+            let arc = HandFan.arc(index: i, count: n, cardWidth: w)
+            let center = CGPoint(x: centers[i], y: tops[i] + arc.dy + h / 2)
+            // Точка в системе карты: поворот обратно на наклон веера.
+            let a = -arc.angle * .pi / 180
+            let dx = point.x - center.x, dy = point.y - center.y
+            let x = dx * cos(a) - dy * sin(a)
+            let y = dx * sin(a) + dy * cos(a)
+            // Небольшой запас по краям — пальцем не всегда попадают точно.
+            if abs(x) <= w / 2 + 2 && y >= -h / 2 - 4 && y <= h / 2 {
+                return i
+            }
+        }
+        return index(at: point.x, centers: centers, cardWidth: w)
+    }
+
+    /// Карта под пальцем по одной координате x: самая верхняя (правая) из тех, чья левая кромка левее точки.
     static func index(at x: CGFloat, centers: [CGFloat], cardWidth w: CGFloat) -> Int? {
         guard let first = centers.first, let last = centers.last else { return nil }
         guard x >= first - w / 2 - 12, x <= last + w / 2 + 12 else { return nil }
