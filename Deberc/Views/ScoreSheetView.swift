@@ -86,7 +86,7 @@ struct ScoreSheetView: View {
         .tableSurface(cornerRadius: 18)
     }
 
-    /// «Вы: байтов 2 — следующий со штрафом −100».
+    /// «Вы: 2 байта — следующий со штрафом −100; голый 1 раз».
     private var penaltyLines: [String] {
         let rules = match.rules
         var lines: [String] = []
@@ -94,7 +94,7 @@ struct ScoreSheetView: View {
             var parts: [String] = []
             let baits = match.baitCounts[seat]
             if baits > 0 {
-                var text = "байтов \(baits)"
+                var text = RuPlural.count(baits, "байт", "байта", "байтов")
                 if rules.baitPenaltyEvery > 1 && baits % rules.baitPenaltyEvery == rules.baitPenaltyEvery - 1 {
                     text += " — следующий со штрафом \(Narrator.number(-rules.baitPenaltyPoints))"
                 } else if rules.baitPenaltyEvery == 1 {
@@ -160,7 +160,7 @@ struct ScoreSheetView: View {
                 .foregroundStyle(ScreenStyle.inkSecondary)
                 .frame(width: numberWidth, alignment: .leading)
             if score.outcome == .allPassed {
-                Text("все пас — пересдача")
+                Text("все спасовали — пересдача")
                     .font(.footnote.italic())
                     .foregroundStyle(ScreenStyle.inkSecondary)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -250,7 +250,7 @@ struct ScoreSheetView: View {
     private func spokenRow(_ score: DealScore) -> String {
         var parts = ["Сдача \(score.number)"]
         if score.outcome == .allPassed {
-            parts.append("все пас, пересдача")
+            parts.append("все спасовали, пересдача")
             return parts.joined(separator: ", ")
         }
         if score.wasPlayed, let bidder = score.bidder, let trump = score.trump {

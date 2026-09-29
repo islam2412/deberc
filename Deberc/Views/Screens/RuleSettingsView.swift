@@ -33,11 +33,11 @@ struct RuleSettingsView: View {
         .background(SheetBackground())
         .navigationTitle("Правила партии")
         .navigationBarTitleDisplayMode(.inline)
-        .alert("Вернуть наши правила?", isPresented: $confirmReset) {
+        .alert("Вернуть «\(RulesText.houseTitle)»?", isPresented: $confirmReset) {
             Button("Вернуть", role: .destructive) { store.settings.rules = .house }
             Button("Отмена", role: .cancel) {}
         } message: {
-            Text("Все пункты станут такими, как в своде домашних правил. Действует с новой партии.")
+            Text("Все пункты станут такими, как были с самого начала. Действует с новой партии.")
         }
     }
 
@@ -252,7 +252,7 @@ struct RuleSettingsView: View {
 
     private var resetSection: some View {
         Section {
-            Button("Вернуть наши правила", role: .destructive) { confirmReset = true }
+            Button("Вернуть «\(RulesText.houseTitle)»", role: .destructive) { confirmReset = true }
                 .disabled(rules == .house)
         }
         .screenRow()
