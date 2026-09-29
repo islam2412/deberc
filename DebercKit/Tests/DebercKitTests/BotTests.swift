@@ -549,7 +549,6 @@ final class BotTests: XCTestCase {
         }
     }
 
-    /// Вдвоём альфа-бета даёт то же значение, что полный перебор.
     /// Быстрая модель розыгрыша разрешает те же карты, что и правила, при любых «козырять» и «перебивать».
     func testSimulatorLegalMovesMatchRules() {
         var rng = SplitMix64(seed: 77)
@@ -576,6 +575,7 @@ final class BotTests: XCTestCase {
         }
     }
 
+    /// Вдвоём альфа-бета даёт то же значение, что полный перебор.
     func testAlphaBetaMatchesFullSearch() throws {
         var checked = 0
         for seed in 0..<12 {

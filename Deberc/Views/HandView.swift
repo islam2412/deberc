@@ -332,7 +332,7 @@ struct HandView: View {
             .offset(x: left, y: lift)
             .accessibilityElement()
             .accessibilityLabel(spokenName(card))
-            .accessibilityValue(spokenState(card, isSelected: isSelected))
+            .accessibilityValue(spokenState(card))
             .accessibilityHint(spokenHint(card, isSelected: isSelected))
             .accessibilityAddTraits(traits)
             .accessibilityAction { store.tapCard(card) }
@@ -344,10 +344,10 @@ struct HandView: View {
         return trump == card.suit ? name + ", козырь" : name
     }
 
-    private func spokenState(_ card: Card, isSelected: Bool) -> String {
-        guard isActive else { return "" }
-        if !legal.contains(card) { return "сейчас ходить нельзя" }
-        return isSelected ? "выбрана" : ""
+    /// Только запрет: выбранную карту VoiceOver и так называет «Выбрано» (трейт `.isSelected`),
+    /// а что сделает касание — в подсказке.
+    private func spokenState(_ card: Card) -> String {
+        isActive && !legal.contains(card) ? "сейчас ходить нельзя" : ""
     }
 
     /// Что сделает двойное касание VoiceOver (обычное касание под VoiceOver только наводит фокус).

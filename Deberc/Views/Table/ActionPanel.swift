@@ -6,6 +6,8 @@ import DebercKit
 struct ActionPanel: View {
     @EnvironmentObject private var store: GameStore
     @Environment(\.cardAppearance) private var appearance
+    @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.tableLargeControls) private var largeControls
     let match: Match
     let deal: Deal
     let metrics: TableMetrics
@@ -313,12 +315,13 @@ struct ActionPanel: View {
 
     /// «Совет»: словом, если в ряду есть место; в рядах торговли — значком с подписью.
     private func hintButton(_ look: HintLook) -> some View {
-        Button {
+        let shown = look == .captioned && !captionFitsPadding ? HintLook.labeled : look
+        return Button {
             store.showHint()
         } label: {
             ZStack {
                 Group {
-                    switch look {
+                    switch shown {
                     case .labeled:
                         ViewThatFits(in: .horizontal) {
                             Label("Совет", systemImage: "lightbulb")
@@ -344,6 +347,13 @@ struct ActionPanel: View {
         .disabled(store.isHinting)
         .accessibilityLabel("Совет")
         .accessibilityInputLabels(["Совет", "Подсказка"])
+    }
+
+    /// Подпись под лампочкой выступает в поля кнопки на полстроки сверху и снизу. Поля 12 pt (14 pt в крупном
+    /// режиме) вмещают её до xxxLarge (в крупном режиме — до AX1); крупнее бывает только на iPad — там лампочка
+    /// легла бы на рамку, а места в ряду хватает: «Совет» пишется рядом со значком, кнопка не выше соседних.
+    private var captionFitsPadding: Bool {
+        typeSize < (largeControls ? .accessibility2 : .accessibility1)
     }
 
     /// Лампочка с мелкой подписью «совет»: один значок непонятен. Место в ряду — как у одного значка
