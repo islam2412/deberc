@@ -139,7 +139,7 @@ final class GameStore: ObservableObject {
 
     init() {
         let options = LaunchOptions.current
-        let storage = Storage(space: options.isDemo ? .demo : .user)
+        let storage = Storage(space: options.isDemo ? .demo : .user, fresh: !options.resume)
         self.options = options
         self.autoplay = options.autoplay
         self.storage = storage
@@ -155,7 +155,11 @@ final class GameStore: ObservableObject {
         sounds.soundEnabled = settings.soundEnabled && !autoplay
         sounds.hapticsEnabled = settings.hapticsEnabled && !autoplay
 
-        if options.isDemo {
+        if options.resume {
+            // Как обычный перезапуск, но из демо-каталога: настройки и партия игрока не трогаются.
+            restoreSavedGame()
+            reportProgress()
+        } else if options.isDemo {
             startDemo()
         } else {
             restoreSavedGame()

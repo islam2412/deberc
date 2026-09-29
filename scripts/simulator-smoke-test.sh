@@ -263,6 +263,29 @@ scenario_relaunch() {
   shot "relaunch"
   record "повторный запуск" "OK" "без аргументов"
   stop_app
+
+  # Восстановление партии: демо-запуск сохраняет идущую партию (за столом), следующий запуск
+  # с -DebercResume открывает её как обычный перезапуск — должен вернуться стол, а не меню.
+  launch "resume-prep" -DebercScreen table -DebercPlayers 2
+  sleep 6
+  alive_or_die "партия для восстановления"
+  stop_app
+  rm -f "$PROGRESS"
+  launch "resume" -DebercResume YES
+  sleep 6
+  alive_or_die "восстановление партии"
+  shot "resume"
+  local line phase
+  line=$(progress)
+  phase=$(printf '%s' "$line" | cut -f3)
+  case "$phase" in
+    bidding-* | exchange | playing) record "восстановление партии" "OK" "фаза: $phase" ;;
+    *) die "После перезапуска не вернулся стол (фаза: ${phase:-нет данных})" ;;
+  esac
+  if ls "$(dirname "$(dirname "$PROGRESS")")/Application Support/Demo"/*.unreadable-*.json >/dev/null 2>&1; then
+    die "Сохранённую партию не удалось прочитать (появился *.unreadable-*.json)"
+  fi
+  stop_app
 }
 
 new_crash_reports() {

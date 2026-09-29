@@ -88,7 +88,8 @@ struct Storage {
     private static let settingsKey = "deberc.settings.v1"
     private static let io = DispatchQueue(label: "deberc.storage", qos: .utility)
 
-    init(space: Space) {
+    /// `fresh` — демо-каталог начать с чистого листа (кроме проверки восстановления, `-DebercResume`).
+    init(space: Space, fresh: Bool = true) {
         self.space = space
         let fm = FileManager.default
         let base = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask,
@@ -99,7 +100,7 @@ struct Storage {
         case .demo:
             directory = base.appendingPathComponent("Demo", isDirectory: true)
             // Каждый демо-запуск — с чистого листа.
-            try? fm.removeItem(at: directory)
+            if fresh { try? fm.removeItem(at: directory) }
         }
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
     }

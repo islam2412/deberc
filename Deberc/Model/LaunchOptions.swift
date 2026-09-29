@@ -10,6 +10,8 @@ import DebercKit
 ///                                    onboarding, summary (итог сдачи), gameover (конец партии),
 ///                                    persona (карточка соперника), opponents (выбор соперника)
 ///     -DebercSeed N                  зерно случайности — чтобы прогон повторялся
+///     -DebercResume YES              открыть партию, сохранённую прошлым демо-запуском, как при обычном
+///                                    перезапуске приложения (проверка восстановления в CI)
 ///     -DebercLarge YES               крупный режим (крупные карты, подписи и кнопки)
 ///     -DebercSpeed slow|normal|fast  темп игры
 ///     -DebercBanter off|rare|normal|often   как часто подначивают соперники
@@ -51,7 +53,9 @@ struct LaunchOptions: Equatable {
     var dragPreview = false
     var scriptedHuman = false
 
-    var isDemo: Bool { autoplay || screenName != nil }
+    var resume = false
+
+    var isDemo: Bool { autoplay || screenName != nil || resume }
 
     /// Аргументы этого запуска.
     static let current = LaunchOptions(defaults: .standard)
@@ -78,6 +82,7 @@ struct LaunchOptions: Equatable {
         }
         large = defaults.bool(forKey: "DebercLarge")
         zoomed = defaults.bool(forKey: "DebercZoom")
+        resume = defaults.bool(forKey: "DebercResume")
         dragPreview = defaults.bool(forKey: "DebercDragPreview")
         scriptedHuman = defaults.bool(forKey: "DebercScriptedHuman")
         let delay = defaults.integer(forKey: "DebercHumanDelay")
