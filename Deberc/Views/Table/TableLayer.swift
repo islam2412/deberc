@@ -16,7 +16,8 @@ struct TableLayerModel {
     var bannerUrgent: Bool
     /// Сдачу только что раздали (стол открылся на ней) — раздача видна с первого кадра.
     var freshDeal: Bool
-    /// Цель партии, висячие очки и пересдачи подряд — для вертикальной надписи у края стола.
+    /// Номер сдачи, цель партии, висячие очки и пересдачи подряд — для вертикальной надписи у края стола.
+    var dealNumber = 0
     var target = 0
     var pot = 0
     var redeals = 0
@@ -235,6 +236,10 @@ struct TableDecorations: View {
     private var matchLabel: some View {
         if !scene.metrics.wide, model.target > 0, let center = frames[.center] {
             HStack(spacing: 10) {
+                if model.dealNumber > 0 {
+                    Text("сдача \(model.dealNumber)")
+                        .foregroundStyle(Theme.tableText.opacity(0.32))
+                }
                 Text("до \(model.target)")
                     .foregroundStyle(Theme.tableText.opacity(0.5))
                 if model.pot > 0 {

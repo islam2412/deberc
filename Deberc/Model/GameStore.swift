@@ -85,6 +85,8 @@ final class GameStore: ObservableObject {
     private var hintTask: Task<Void, Never>?
     private var announcementTask: Task<Void, Never>?
     private var announcementSerial = 0
+    /// Номер прогона очереди: отменённый прогон, проснувшись, не трогает новый.
+    private var announcementRun = 0
     /// Объявления, ждущие своей очереди, и когда очередь освободится.
     private var announcementQueue: [(kind: TableAnnouncement.Kind, duration: Duration)] = []
     private var announcementsBusyUntil = ContinuousClock.now
@@ -448,25 +450,28 @@ final class GameStore: ObservableObject {
         hold(announcementsBusyUntil - now)
         announcementQueue.append((kind, duration))
         guard announcementTask == nil else { return }
+        announcementRun &+= 1
+        let run = announcementRun
         announcementTask = Task { [weak self] in
-            await self?.runAnnouncements()
+            await self?.runAnnouncements(run)
         }
     }
 
-    private func runAnnouncements() async {
-        while !Task.isCancelled, !announcementQueue.isEmpty {
+    private func runAnnouncements(_ run: Int) async {
+        while !Task.isCancelled, run == announcementRun, !announcementQueue.isEmpty {
             let next = announcementQueue.removeFirst()
             announcementSerial &+= 1
             let item = TableAnnouncement(id: announcementSerial, kind: next.kind)
             withAnimation(animation(.spring(response: 0.42, dampingFraction: 0.7))) { announcement = item }
-            guard await visibleSleep(next.duration), announcement?.id == item.id else { break }
+            guard await visibleSleep(next.duration), run == announcementRun, announcement?.id == item.id else { break }
             withAnimation(.easeOut(duration: 0.3)) { announcement = nil }
             try? await Task.sleep(for: .milliseconds(250))
         }
-        announcementTask = nil
+        if run == announcementRun { announcementTask = nil }
     }
 
     private func clearAnnouncement() {
+        announcementRun &+= 1
         announcementTask?.cancel()
         announcementTask = nil
         announcementQueue.removeAll()

@@ -98,6 +98,8 @@ struct SeatColumn: View {
 /// Своё место над рукой: счёт, прогресс, «сдаёте»/«играете», свои комбинации,
 /// взятки и очки в сдаче, стопка взяток.
 struct HumanStrip: View {
+    @EnvironmentObject private var store: GameStore
+
     struct Live: Equatable {
         var tricks: Int
         var points: Int
@@ -112,8 +114,9 @@ struct HumanStrip: View {
     var body: some View {
         HStack(spacing: 8) {
             ViewThatFits(in: .horizontal) {
-                scorePlate(showsProgress: true)
-                scorePlate(showsProgress: false)
+                scorePlate(showsProgress: true, avatar: true)
+                scorePlate(showsProgress: false, avatar: true)
+                scorePlate(showsProgress: false, avatar: false)
             }
             .layoutPriority(2)
             if !info.declarations.isEmpty {
@@ -140,9 +143,13 @@ struct HumanStrip: View {
     private var tileHeight: CGFloat { metrics.roomy ? 30 : 24 }
     private var stripWidth: CGFloat { metrics.roomy ? 1100 : .infinity }
 
-    /// «Вы», счёт, прогресс, «сдаёте»; масть козыря у играющего — значком на углу, как у соперников.
-    private func scorePlate(showsProgress: Bool) -> some View {
+    /// Аватар, «Вы», счёт, прогресс, «сдаёте»; масть козыря у играющего — значком на углу, как у соперников.
+    private func scorePlate(showsProgress: Bool, avatar: Bool) -> some View {
         HStack(spacing: 8) {
+            if avatar {
+                HumanAvatarView(name: store.settings.playerName, size: metrics.roomy ? 34 : 28)
+                    .overlay(Circle().strokeBorder(info.isActive ? Theme.gold : Color.clear, lineWidth: 2))
+            }
             Text("Вы")
                 .font(Theme.Typography.seatName)
                 .foregroundStyle(info.isActive ? Theme.gold : Theme.tableText)

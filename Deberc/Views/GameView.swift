@@ -415,6 +415,7 @@ struct TableScreen: View {
             banner: store.showDealSummary ? nil : store.banner,
             bannerUrgent: store.bannerIsUrgent,
             freshDeal: !deal.prikupDealt && deal.tricks.isEmpty && !deal.isFinished && !reduceMotion,
+            dealNumber: match.dealCount,
             target: match.rules.targetScore,
             pot: match.pot,
             redeals: deal.forced ? 0 : match.allPassStreak,
