@@ -52,6 +52,8 @@ struct TableMetrics: Equatable {
     let large: Bool
     let gutter: CGFloat
     let spacing: CGFloat
+    /// Ширина стола: окно без панели счёта справа.
+    let tableWidth: CGFloat
     let sidePanelWidth: CGFloat
     let sideSeatWidth: CGFloat
     let topBarHeight: CGFloat
@@ -73,8 +75,17 @@ struct TableMetrics: Equatable {
     let earWidth: CGFloat
     /// Две строки подписи козыря помещаются в ушко по высоте.
     let earTwoLines: Bool
+    /// Вид козыря в правом ушке — один на всю партию: он выбирается по самой длинной масти и подписи
+    /// торговли, а не по той, что сейчас. Иначе от сдачи к сдаче («Пики» и «Трефы») индикатор менял бы вид.
+    let earTrumpStyle: EarTrumpStyle
+    /// Втроём с ушками: место под висячие очки в левом ушке — от кнопки меню (с зазором 8 pt) до выреза
+    /// (с зазором 8 pt). Не помещаются и в две строки — золотым числом на уголке козыря.
+    let earLeftSpace: CGFloat
     static let earLeading: CGFloat = 16
     static let earTrailing: CGFloat = 20
+    /// Втроём на телефоне — ширина колонки соперника (плашка, веер и стопка): оба соперника с промежутком
+    /// 12 pt помещаются между полями. В остальных раскладках — без ограничения.
+    let opponentColumnWidth: CGFloat
     let handCardWidth: CGFloat
     let fanCardWidth: CGFloat
     let pileCardWidth: CGFloat
@@ -117,6 +128,7 @@ struct TableMetrics: Equatable {
         self.spacing = spacing
         sidePanelWidth = wide ? min(340, (width * 0.27).rounded()) : 0
         let tableWidth = width - sidePanelWidth
+        self.tableWidth = tableWidth
         sideSeatWidth = sideSeats ? min(240, (tableWidth * 0.22).rounded()) : 0
         let topBarHeight: CGFloat = roomy ? (large ? 72 : 62) : (large ? 60 : 50)
         self.topBarHeight = topBarHeight
@@ -157,14 +169,38 @@ struct TableMetrics: Equatable {
         if earBar {
             let island = safeTop >= 51 || safeTop / width >= 0.145
             let cutout = island ? 126 * min(1, width / 393) : min(width * 0.56, 230)
-            let earHeight = min(46, safeTop - 13)
+            // У выреза верхний отступ меньше (44–50 pt), чем у острова, — ушко выше за счёт полей:
+            // 40 pt на 12–14 и 16e, 37 на X/XS/11 Pro, 41 на 11/XR, 43 на mini.
+            let earHeight = island ? min(46, safeTop - 13) : min(44, safeTop - 7)
             self.earHeight = earHeight
-            earWidth = max(0, ((width - cutout) / 2 - 8 - TableMetrics.earTrailing).rounded(.down))
-            earTwoLines = text.lineHeight(.caption) + text.lineHeight(.label) + 6 <= earHeight
+            let earWidth = max(0, ((width - cutout) / 2 - 8 - TableMetrics.earTrailing).rounded(.down))
+            self.earWidth = earWidth
+            let earTwoLines = text.lineHeight(.caption) + text.lineHeight(.label) + 6 <= earHeight
+            self.earTwoLines = earTwoLines
+            earLeftSpace = max(0, ((width - cutout) / 2 - TableMetrics.earLeading - 44 - 16).rounded(.down))
+            // Вид козыря — по самой длинной масти и по подписи торговли (до козыря бейдж пишет круг торговли,
+            // без значка масти): помещаются оба — этот вид и берём на всю партию.
+            let suits = Suit.allCases.map { text.width(TableText.suitTitle($0), .label) }.max() ?? 0
+            let rounds = TrumpBadge.roundTexts.map { text.width($0, .label) }.max() ?? 0
+            let roundCaptions = TrumpBadge.roundTexts.map { text.width($0, .caption) }.max() ?? 0
+            let badge = min(30, earHeight - 10)
+            let twoLinesWidth = max(16 + badge + 6 + max(suits, text.width("козырь", .caption), text.width("обязы", .caption)),
+                                    16 + max(text.width("Торговля", .label), roundCaptions))
+            if earTwoLines && twoLinesWidth <= earWidth {
+                earTrumpStyle = .twoLines
+            } else if max(16 + badge + 6 + suits, 16 + rounds) <= earWidth {
+                earTrumpStyle = .oneLine
+            } else if max(12 + 26 + 4 + suits, 12 + rounds) <= earWidth {
+                earTrumpStyle = .tight
+            } else {
+                earTrumpStyle = .compact
+            }
         } else {
             earHeight = 0
             earWidth = 0
             earTwoLines = false
+            earTrumpStyle = .compact
+            earLeftSpace = 0
         }
 
         let handUnderEdge = !roomy || wide
@@ -239,9 +275,73 @@ struct TableMetrics: Equatable {
             hand = max(44, min(large ? 180 : 165, byWidth, byHeight)).rounded()
         }
         handCardWidth = hand
-        fanCardWidth = TableMetrics.fanWidth(hand: hand, roomy: roomy)
-        pileCardWidth = TableMetrics.pileWidth(hand: hand, roomy: roomy)
+        var fan = TableMetrics.fanWidth(hand: hand, roomy: roomy)
+        var pile = TableMetrics.pileWidth(hand: hand, roomy: roomy)
+        var column = CGFloat.infinity
+        if playerCount == 3 && !sideSeats && handUnderEdge {
+            // Втроём на телефоне два соперника стоят в ряд: веер и стопка каждого — в пол-стола
+            // (2 pt запаса на округления). На 320 pt веер чуть мельче, на 375–440 pt — как был.
+            column = ((tableWidth - 2 * gutter - 12) / 2 - 2).rounded(.down)
+            func stack(_ f: CGFloat, _ p: CGFloat) -> CGFloat {
+                (f * 3.6).rounded() + 8 + (p * CardView.aspectRatio).rounded() + 12
+            }
+            while stack(fan, pile) > column && (fan > 18 || pile > 16) {
+                if fan > 18 { fan -= 1 } else { pile -= 1 }
+            }
+        }
+        opponentColumnWidth = column
+        fanCardWidth = fan
+        pileCardWidth = pile
+        #if DEBUG
+        if earBar {
+            assert(earWidth >= 44, "Ушко меньше 44 pt в ширину: \(earWidth)")
+        }
+        if column.isFinite {
+            assert(2 * (fanSlotSize.width + 8 + pileSlotSize.width) + 12 + 2 * gutter <= tableWidth + 0.5,
+                   "Соперники втроём не помещаются в \(tableWidth) pt")
+        }
+        #endif
     }
+
+    /// Вид козыря в правом ушке (`TableEarBar`), от просторного к тесному.
+    enum EarTrumpStyle {
+        /// «козырь» над названием масти, значок 30 pt.
+        case twoLines
+        /// Название масти в одну строку, значок 30 pt.
+        case oneLine
+        /// Название масти, поля и промежуток поменьше, значок 26 pt.
+        case tight
+        /// Один значок масти (до козыря — «круг 1»).
+        case compact
+    }
+
+    /// Вдвоём с ушками: место справа от веера соперника под висячие очки — от веера (с зазором 8 pt) до поля.
+    var fanSideSpace: CGFloat {
+        max(0, ((tableWidth - fanSlotSize.width) / 2 - 8 - gutter).rounded(.down))
+    }
+
+    #if DEBUG
+    /// Самопроверка раскладки (`-DebercLayoutCheck`): что на этом размере не помещается; пусто — всё в порядке.
+    var layoutProblems: [String] {
+        var problems: [String] = []
+        if opponentColumnWidth.isFinite {
+            let row = 2 * (fanSlotSize.width + 8 + pileSlotSize.width) + 12 + 2 * gutter
+            if row > tableWidth + 0.5 {
+                problems.append("соперники втроём: \(row) pt при ширине \(tableWidth)")
+            }
+            if fanSlotSize.width + 8 + pileSlotSize.width > opponentColumnWidth {
+                problems.append("веер и стопка шире колонки \(opponentColumnWidth)")
+            }
+        }
+        if earBar {
+            if earWidth < 44 { problems.append("ушко \(earWidth) pt в ширину — меньше 44") }
+            if earHeight < 34 { problems.append("ушко низкое: \(earHeight) pt") }
+            // Самый узкий вид козыря — значок масти с полями.
+            if 12 + min(36, earHeight - 10) > earWidth { problems.append("значок козыря не помещается в ушко") }
+        }
+        return problems
+    }
+    #endif
 
     /// Карты веера соперника — по руке.
     private static func fanWidth(hand: CGFloat, roomy: Bool) -> CGFloat {

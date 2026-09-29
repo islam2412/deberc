@@ -16,7 +16,8 @@ struct TableCommands {
 
 /// Верхняя полоса стола: меню и козырь; вдвоём между ними — соперник, под ним его карты и взятки.
 /// Колода лежит на столе у левого края, номер сдачи и цель партии — вертикальной надписью
-/// у правого (`TableDecorations`); висячие очки и пересдачи — золотом под козырем (`PotChip`).
+/// у правого (`TableDecorations`); висячие очки и пересдачи — золотом под козырем (`PotChip`),
+/// а с ушками у выреза — справа от веера соперника или в левом ушке (`TableEarBar`).
 struct TableTopBar: View {
     @EnvironmentObject private var store: GameStore
     let match: Match
@@ -30,10 +31,13 @@ struct TableTopBar: View {
     var body: some View {
         Group {
             if metrics.earBar {
-                // Меню и козырь — в ушках у выреза (`TableEarBar`); здесь вдвоём только соперник.
+                // Меню и козырь — в ушках у выреза (`TableEarBar`); здесь вдвоём только соперник,
+                // а висячие очки — справа от его веера (в ушке рядом с козырем им тесно).
                 if let opponent {
                     OpponentCluster(info: opponent, metrics: metrics, commands: commands,
-                                    canShowLastTrick: canShowLastTrick)
+                                    canShowLastTrick: canShowLastTrick,
+                                    pot: PotChip.text(pot: match.pot, redeals: redeals,
+                                                      forcedAfter: match.rules.forcedDealAfterRedeals))
                         .frame(maxWidth: .infinity)
                 }
             } else if let opponent {
@@ -131,7 +135,7 @@ struct TableTopBar: View {
 
     private var trumpDetail: String? {
         guard let bidder = deal.bidder else { return nil }
-        let who = bidder == store.humanSeat ? "Вы играете" : "играет \(store.displayName(for: bidder))"
+        let who = bidder == store.humanSeat ? "играете вы" : "играет \(store.displayName(for: bidder))"
         return deal.forced ? "обязы · " + who : who
     }
 
@@ -140,12 +144,12 @@ struct TableTopBar: View {
     static func matchSpoken(match: Match, deal: Deal) -> String {
         var parts = ["сдача \(max(1, match.dealCount))", "партия до \(match.rules.targetScore)"]
         if match.pot > 0 {
-            parts.append("висят \(match.pot) \(TableText.plural(match.pot, "очко", "очка", "очков"))")
+            parts.append("\(RuPlural.form(match.pot, "висит", "висят", "висят")) \(Narrator.points(match.pot))")
         }
         let forcedAfter = match.rules.forcedDealAfterRedeals
         let redeals = redeals(match: match, deal: deal)
         if redeals > 0 && forcedAfter > 0 {
-            parts.append("пересдач \(redeals) из \(forcedAfter), дальше обязы")
+            parts.append("пересдача \(redeals) из \(forcedAfter), дальше обязы")
         }
         return parts.joined(separator: ", ")
     }
@@ -154,12 +158,15 @@ struct TableTopBar: View {
 /// Только что назначили козырь — индикатор ненадолго вспыхивает золотом.
 struct TrumpFlash: ViewModifier {
     let trump: Suit?
+    /// Точка, от которой бейдж растёт при вспышке. В ушке — правый верхний угол: верх и правый край
+    /// остаются на месте и не уходят за скругление экрана.
+    var anchor: UnitPoint = .trailing
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var flash = false
 
     func body(content: Content) -> some View {
         content
-            .scaleEffect(flash ? 1.1 : 1, anchor: .trailing)
+            .scaleEffect(flash ? 1.1 : 1, anchor: anchor)
             .shadow(color: Theme.gold.opacity(flash ? 0.75 : 0), radius: flash ? 10 : 0)
             .animation(flash ? .spring(response: 0.3, dampingFraction: 0.55) : .easeOut(duration: 0.45),
                        value: flash)
@@ -176,8 +183,9 @@ struct TrumpFlash: ViewModifier {
 
 /// Меню и козырь в «ушках» по бокам выреза или Dynamic Island (`TableMetrics.earBar`): строка состояния
 /// за столом скрыта, место по бокам выреза иначе пустовало бы, а полоса под вырезом отнимала бы у стола
-/// 50–60 pt. Меню — слева; справа — козырь в ширину ушка, висячие очки — золотой строкой в нём же
-/// (не помещается и она — золотым числом на уголке). Центр полосы — посередине верхнего отступа.
+/// 50–60 pt. Меню — слева; справа — козырь в ширину ушка, в одном виде на всю партию (`earTrumpStyle`).
+/// Висячие очки и пересдачи: вдвоём — справа от веера соперника (`OpponentCluster`); втроём — в левом ушке
+/// за меню, а не помещаются и там — золотым числом на уголке козыря. Центр полосы — посередине верхнего отступа.
 /// `trump: false` — только меню (поверх окна итогов, на том же месте).
 struct TableEarBar: View {
     let match: Match
@@ -185,20 +193,28 @@ struct TableEarBar: View {
     let metrics: TableMetrics
     let commands: TableCommands
     var trump = true
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
+        let chip = trump ? earChip : nil
         HStack(spacing: 0) {
             TableMenuButton(commands: commands, size: min(44, metrics.earHeight))
+            if let chip {
+                PotChip(text: chip.text, twoLines: chip.twoLines)
+                    .padding(.leading, 8)
+            }
             Spacer(minLength: 0)
             if trump {
-                indicator
+                indicator(dot: chip == nil)
                     .frame(maxWidth: metrics.earWidth, alignment: .trailing)
-                    .modifier(TrumpFlash(trump: deal.trump))
+                    .modifier(TrumpFlash(trump: deal.trump, anchor: .topTrailing))
             }
         }
         .padding(.leading, TableMetrics.earLeading)
         .padding(.trailing, TableMetrics.earTrailing)
         .frame(height: metrics.earHeight)
+        // Одна группа для VoiceOver: столу она ставится первой (`accessibilitySortPriority`), внутри — меню, потом козырь.
+        .accessibilityElement(children: .contain)
     }
 
     private var pot: String? {
@@ -206,41 +222,69 @@ struct TableEarBar: View {
                      forcedAfter: match.rules.forcedDealAfterRedeals)
     }
 
-    private var indicator: some View {
+    /// Втроём — висячие очки в левом ушке, если помещаются в одну строку или в две (по ширине и высоте ушка).
+    private var earChip: (text: String, twoLines: Bool)? {
+        guard match.playerCount == 3, let pot else { return nil }
+        let text = TableTextMetrics(typeSize: typeSize)
+        if PotChip.width(pot, text) <= metrics.earLeftSpace {
+            return (pot, false)
+        }
+        if PotChip.twoLinesHeight(text) <= metrics.earHeight,
+           PotChip.width(pot, text, twoLines: true) <= metrics.earLeftSpace {
+            return (pot, true)
+        }
+        return nil
+    }
+
+    /// Козырь в выбранном для партии виде; на всякий случай (не поместился) — один значок масти.
+    private func indicator(dot: Bool) -> some View {
         ViewThatFits(in: .horizontal) {
-            if metrics.earTwoLines {
-                badge(note: pot, twoLines: true)
-                if pot != nil {
-                    badge(note: nil, twoLines: true).overlay(alignment: .bottomLeading) { potDot }
-                }
-            }
-            badge(note: nil, twoLines: false).overlay(alignment: .bottomLeading) { potDot }
-            badge(note: nil, twoLines: false, compact: true).overlay(alignment: .bottomLeading) { potDot }
+            badge(metrics.earTrumpStyle)
+            badge(.compact)
+        }
+        .overlay(alignment: .bottomLeading) {
+            if dot { potDot }
         }
         .accessibilityElement(children: .combine)
         .accessibilityValue(TableTopBar.matchSpoken(match: match, deal: deal))
     }
 
-    private func badge(note: String?, twoLines: Bool, compact: Bool = false) -> some View {
-        TrumpBadge(trump: deal.trump, detail: nil, biddingRound: TableTopBar.biddingRound(deal),
-                   height: metrics.earHeight + 6, compact: compact, forced: deal.forced,
-                   note: note, twoLinesOverride: twoLines)
-            .fixedSize()
+    @ViewBuilder
+    private func badge(_ style: TableMetrics.EarTrumpStyle) -> some View {
+        let view = TrumpBadge(trump: deal.trump, detail: nil, biddingRound: TableTopBar.biddingRound(deal),
+                              height: metrics.earHeight + 6, compact: style == .compact, forced: deal.forced,
+                              twoLinesOverride: style == .twoLines, tight: style == .tight, iconTrailing: true)
+        if style == .compact {
+            // Подпись торговли ужимается в ширину ушка, а не заходит под вырез.
+            view.frame(maxWidth: metrics.earWidth)
+        } else {
+            view.fixedSize()
+        }
     }
 
-    /// Висячие очки числом на уголке — когда строкой они в ушко не влезают.
+    /// Втроём висячие очки (или пересдачи «1/2») числом на уголке козыря — когда строкой в левое ушко не влезают.
+    /// Вдвоём они справа от веера соперника.
     @ViewBuilder
     private var potDot: some View {
-        if match.pot > 0 {
-            Text("\(match.pot)")
-                .font(.caption2.weight(.bold).monospacedDigit())
+        if match.playerCount == 3, let value = potDotText {
+            Text(value)
+                .font(Theme.Typography.caption.monospacedDigit())
                 .foregroundStyle(Theme.feltEdge)
+                .lineLimit(1)
+                .fixedSize()
                 .padding(.horizontal, 5)
-                .frame(minWidth: 18, minHeight: 18)
+                .frame(minWidth: 22, minHeight: 22)
                 .background(Capsule().fill(Theme.gold))
                 .offset(x: -6, y: 6)
                 .accessibilityHidden(true)
         }
+    }
+
+    private var potDotText: String? {
+        if match.pot > 0 { return "\(match.pot)" }
+        let redeals = TableTopBar.redeals(match: match, deal: deal)
+        let forcedAfter = match.rules.forcedDealAfterRedeals
+        return redeals > 0 && forcedAfter > 0 ? "\(redeals)/\(forcedAfter)" : nil
     }
 }
 
@@ -250,6 +294,9 @@ struct OpponentCluster: View {
     let metrics: TableMetrics
     let commands: TableCommands
     let canShowLastTrick: Bool
+    /// Висячие очки или пересдачи — справа от веера (с ушками у выреза: в ушке рядом с козырем им тесно).
+    var pot: String? = nil
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
         VStack(spacing: 4) {
@@ -264,6 +311,16 @@ struct OpponentCluster: View {
                              enabled: canShowLastTrick, onTap: commands.showLastTrick)
                         .offset(x: -(metrics.pileSlotSize.width + 8))
                 }
+                .overlay(alignment: .leading) {
+                    if let pot {
+                        // В 8 pt правее веера; в одну строку не помещается до поля — в две
+                        // (а на 320 pt в крупном режиме «пересдача» и в две строки чуть мельче).
+                        PotChip(text: pot, twoLines: PotChip.width(pot, TableTextMetrics(typeSize: typeSize))
+                                    > metrics.fanSideSpace, shrinks: true)
+                            .frame(width: metrics.fanSideSpace, alignment: .leading)
+                            .offset(x: metrics.fanSlotSize.width + 8)
+                    }
+                }
         }
     }
 }
@@ -273,15 +330,22 @@ struct OpponentCluster: View {
 struct TableMenuButton: View {
     let commands: TableCommands
     var size: CGFloat = 44
+    /// Зона касания — не меньше 44 × 44 pt, даже когда видимый круг меньше (низкое ушко у выреза).
+    var hitSize: CGFloat = 44
+    @Environment(\.tableLargeControls) private var large
 
     var body: some View {
+        // Поля вокруг круга расширяют только зону касания: раскладка и видимый круг прежние.
+        let pad = max(0, (hitSize - size) / 2)
         Button(action: commands.showMenu) {
             Image(systemName: "line.3.horizontal")
-                .font(.system(size: size * 0.42, weight: .semibold))
+                .font(.system(size: large ? max(17, size * 0.5) : size * 0.42, weight: .semibold))
                 .foregroundStyle(Theme.tableText)
                 .frame(width: size, height: size)
                 .tableSurface(cornerRadius: size / 2, interactive: true)
-                .contentShape(Circle())
+                .padding(pad)
+                .contentShape(Rectangle())
+                .padding(-pad)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Меню")
@@ -331,7 +395,7 @@ struct TableMenuPanel: View {
             item("Правила", icon: "book", perform: commands.showRules)
             if !store.showDealSummary {
                 if store.isHumanTurn {
-                    item("Подсказка", icon: "lightbulb") { store.showHint() }
+                    item("Совет", icon: "lightbulb") { store.showHint() }
                 }
                 if store.canUndo {
                     item("Отменить ход", icon: "arrow.uturn.backward") { store.undo() }

@@ -52,10 +52,11 @@ struct PileSlot: View {
     }
 
     private var spokenLabel: String {
+        let count = RuPlural.count(tricks, "взятка", "взятки", "взяток")
         guard let owner else {
-            return tricks > 0 ? "Ваши взятки: \(tricks)" : "Ваших взяток пока нет"
+            return tricks > 0 ? "У вас \(count)" : "Ваших взяток пока нет"
         }
-        return tricks > 0 ? "\(owner): взяток \(tricks)" : "\(owner): взяток пока нет"
+        return tricks > 0 ? "\(owner): \(count)" : "\(owner): взяток пока нет"
     }
 }
 
@@ -70,7 +71,9 @@ struct SeatStack: View {
 
     var body: some View {
         VStack(alignment: leading ? .leading : .trailing, spacing: metrics.spacing) {
-            SeatPlate(info: info, avatarSize: metrics.avatarSize, maxWidth: metrics.roomy ? 320 : 210,
+            // Не шире колонки (`opponentColumnWidth`): иначе широкая плашка раздвинула бы ряд за край экрана.
+            SeatPlate(info: info, avatarSize: metrics.avatarSize,
+                      maxWidth: metrics.roomy ? 320 : min(210, metrics.opponentColumnWidth),
                       onTap: { commands.showPersona(info.seat) })
                 .tableSlot(.seat(info.seat))
             HStack(spacing: 8) {
@@ -153,9 +156,13 @@ struct HumanStrip: View {
             }
             Spacer(minLength: 0)
             if let live {
+                // Место — под трёхзначные очки; на 320 pt в крупном режиме оно не помещается — под двузначные
+                // (очки видны, а плашка перестроится разве что раз за сдачу, на сотне).
                 ViewThatFits(in: .horizontal) {
                     liveBlock(live, compact: false)
                     liveBlock(live, compact: true)
+                    liveBlock(live, compact: false, digits: 2)
+                    liveBlock(live, compact: true, digits: 2)
                     Color.clear.frame(width: 0, height: 0)
                 }
                 .layoutPriority(3)
@@ -219,18 +226,31 @@ struct HumanStrip: View {
     }
 
     /// Взятки и очки в сдаче; `compact` — одной строкой, только очки (число взяток — и на стопке).
-    private func liveBlock(_ live: Live, compact: Bool) -> some View {
+    /// `digits` — под сколько цифр очков держать место.
+    private func liveBlock(_ live: Live, compact: Bool, digits: Int = 3) -> some View {
         let tricks = "\(live.tricks) \(TableText.plural(live.tricks, "взятка", "взятки", "взяток"))"
         let points = "\(live.points) \(TableText.plural(live.points, "очко", "очка", "очков"))"
-        return VStack(alignment: .trailing, spacing: 0) {
-            if !compact {
-                Text(tricks)
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(Theme.tableSecondaryText)
+        // Ширина — по самым длинным строкам, а не по нынешним: иначе с каждой взяткой («0 очков» → «24 очка»)
+        // блок шире, и плашка «Вы» слева прыгала бы между вариантами (пропадал аватар, мельчало «сдаёте»).
+        return ZStack(alignment: .trailing) {
+            VStack(alignment: .trailing, spacing: 0) {
+                if !compact {
+                    Text("8 взяток")
+                }
+                Text(String(repeating: "8", count: digits) + " очков")
             }
-            Text(points)
-                .font(Theme.Typography.caption)
-                .foregroundStyle(Theme.gold)
+            .font(Theme.Typography.caption)
+            .hidden()
+            VStack(alignment: .trailing, spacing: 0) {
+                if !compact {
+                    Text(tricks)
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.tableSecondaryText)
+                }
+                Text(points)
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Theme.gold)
+            }
         }
         .lineLimit(1)
         .fixedSize()
