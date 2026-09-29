@@ -18,9 +18,11 @@ struct FanSlot: View {
     }
 }
 
-/// Место под стопку взяток. Касание показывает последнюю взятку.
+/// Место под стопку взяток. Касание показывает последнюю взятку стола (кто бы её ни взял).
 struct PileSlot: View {
     let seat: Int
+    /// Чья стопка — для VoiceOver (втроём две стопки соперников иначе звучали бы одинаково); nil — ваша.
+    let owner: String?
     let tricks: Int
     let metrics: TableMetrics
     let enabled: Bool
@@ -28,17 +30,32 @@ struct PileSlot: View {
 
     var body: some View {
         let size = metrics.pileSlotSize
+        // Рамка — по размеру стопки (по ней лежат карты слоя), а зона касания — не меньше 44 pt:
+        // в стопку 32–38 pt высотой пальцем не попасть. Поля вокруг рамки не меняют раскладку.
+        let padX = max(0, (44 - size.width) / 2)
+        let padY = max(0, (44 - size.height) / 2)
         Color.clear
             .frame(width: size.width, height: size.height)
+            .tableSlot(.pile(seat))
+            .padding(.horizontal, padX)
+            .padding(.vertical, padY)
             .contentShape(Rectangle())
             .onTapGesture {
                 if enabled { onTap() }
             }
-            .tableSlot(.pile(seat))
             .accessibilityElement()
-            .accessibilityLabel(tricks > 0 ? "Взяток: \(tricks)" : "Взяток пока нет")
-            .accessibilityHint(enabled ? "Показать последнюю взятку" : "")
+            .accessibilityLabel(spokenLabel)
+            .accessibilityHint(enabled ? "Показать последнюю взятку стола" : "")
             .accessibilityAddTraits(enabled ? .isButton : [])
+            .padding(.horizontal, -padX)
+            .padding(.vertical, -padY)
+    }
+
+    private var spokenLabel: String {
+        guard let owner else {
+            return tricks > 0 ? "Ваши взятки: \(tricks)" : "Ваших взяток пока нет"
+        }
+        return tricks > 0 ? "\(owner): взяток \(tricks)" : "\(owner): взяток пока нет"
     }
 }
 
@@ -69,7 +86,7 @@ struct SeatStack: View {
     }
 
     private var pile: some View {
-        PileSlot(seat: info.seat, tricks: info.tricks, metrics: metrics,
+        PileSlot(seat: info.seat, owner: info.name, tricks: info.tricks, metrics: metrics,
                  enabled: canShowLastTrick, onTap: commands.showLastTrick)
     }
 }
@@ -87,7 +104,7 @@ struct SeatColumn: View {
                       onTap: { commands.showPersona(info.seat) })
                 .tableSlot(.seat(info.seat))
             FanSlot(seat: info.seat, metrics: metrics)
-            PileSlot(seat: info.seat, tricks: info.tricks, metrics: metrics,
+            PileSlot(seat: info.seat, owner: info.name, tricks: info.tricks, metrics: metrics,
                      enabled: canShowLastTrick, onTap: commands.showLastTrick)
             Spacer(minLength: 0)
         }
@@ -112,26 +129,38 @@ struct HumanStrip: View {
     let canShowLastTrick: Bool
 
     var body: some View {
+        // Место делится по приоритетам: сначала очки в сдаче — но лишь то, что остаётся за самым узким
+        // вариантом плашки (счёт виден всегда); потом плашка выбирает вариант под остаток; комбинации — последними.
+        // Тесно (узкий экран, крупный текст, вы сдаёте) — плашка теряет полоску прогресса, «сдаёте» становится
+        // маленькой меткой, пропадает аватар; очки в сдаче — одной строкой или совсем. Стопка — всегда.
+        // У каждой части последний вариант заведомо помещается, поэтому полоса не выходит за края экрана.
         HStack(spacing: 8) {
             ViewThatFits(in: .horizontal) {
-                scorePlate(showsProgress: true, avatar: true)
-                scorePlate(showsProgress: false, avatar: true)
-                scorePlate(showsProgress: false, avatar: false)
+                scorePlate(showsProgress: true, avatar: true, dealerWord: true)
+                scorePlate(showsProgress: false, avatar: true, dealerWord: true)
+                scorePlate(showsProgress: false, avatar: true, dealerWord: false)
+                scorePlate(showsProgress: false, avatar: false, dealerWord: false)
             }
             .layoutPriority(2)
             if !info.declarations.isEmpty {
                 ViewThatFits(in: .horizontal) {
-                    DeclarationRow(items: info.declarations, rules: info.rules, tileHeight: tileHeight)
-                    DeclarationRow(items: info.declarations, rules: info.rules, tileHeight: tileHeight, compact: true)
+                    DeclarationRow(items: info.declarations, rules: info.rules, tileHeight: metrics.tileHeight)
+                    DeclarationRow(items: info.declarations, rules: info.rules, tileHeight: metrics.tileHeight,
+                                   compact: true)
                     Color.clear.frame(width: 0, height: 0)
                 }
                 .layoutPriority(1)
             }
             Spacer(minLength: 0)
             if let live {
-                liveBlock(live)
+                ViewThatFits(in: .horizontal) {
+                    liveBlock(live, compact: false)
+                    liveBlock(live, compact: true)
+                    Color.clear.frame(width: 0, height: 0)
+                }
+                .layoutPriority(3)
             }
-            PileSlot(seat: info.seat, tricks: info.tricks, metrics: metrics,
+            PileSlot(seat: info.seat, owner: nil, tricks: info.tricks, metrics: metrics,
                      enabled: canShowLastTrick, onTap: commands.showLastTrick)
         }
         .frame(maxWidth: stripWidth)
@@ -140,11 +169,11 @@ struct HumanStrip: View {
         .transaction { $0.animation = nil }
     }
 
-    private var tileHeight: CGFloat { metrics.roomy ? 30 : 24 }
     private var stripWidth: CGFloat { metrics.roomy ? 1100 : .infinity }
 
     /// Аватар, «Вы», счёт, прогресс, «сдаёте»; масть козыря у играющего — значком на углу, как у соперников.
-    private func scorePlate(showsProgress: Bool, avatar: Bool) -> some View {
+    /// `dealerWord` — «сдаёте» подписью размера текста; иначе — маленькой меткой постоянного размера.
+    private func scorePlate(showsProgress: Bool, avatar: Bool, dealerWord: Bool) -> some View {
         HStack(spacing: 8) {
             if avatar {
                 HumanAvatarView(name: store.settings.playerName, size: metrics.roomy ? 34 : 28)
@@ -169,7 +198,8 @@ struct HumanStrip: View {
                 MarksLabel(info: info)
             }
             if info.isDealer {
-                DealerTag(text: "сдаёте")
+                // Мелкая метка — 12 pt, как у соперников на аватаре (не мельче: кто сдаёт, важно).
+                DealerTag(text: "сдаёте", fontSize: dealerWord ? nil : 12)
             }
         }
         .padding(.horizontal, 10)
@@ -188,18 +218,23 @@ struct HumanStrip: View {
         .accessibilityValue(info.spokenValue)
     }
 
-    private func liveBlock(_ live: Live) -> some View {
-        VStack(alignment: .trailing, spacing: 0) {
-            Text("\(live.tricks) \(TableText.plural(live.tricks, "взятка", "взятки", "взяток"))")
-                .font(Theme.Typography.caption)
-                .foregroundStyle(Theme.tableSecondaryText)
-            Text("\(live.points) \(TableText.plural(live.points, "очко", "очка", "очков"))")
+    /// Взятки и очки в сдаче; `compact` — одной строкой, только очки (число взяток — и на стопке).
+    private func liveBlock(_ live: Live, compact: Bool) -> some View {
+        let tricks = "\(live.tricks) \(TableText.plural(live.tricks, "взятка", "взятки", "взяток"))"
+        let points = "\(live.points) \(TableText.plural(live.points, "очко", "очка", "очков"))"
+        return VStack(alignment: .trailing, spacing: 0) {
+            if !compact {
+                Text(tricks)
+                    .font(Theme.Typography.caption)
+                    .foregroundStyle(Theme.tableSecondaryText)
+            }
+            Text(points)
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.gold)
         }
         .lineLimit(1)
         .fixedSize()
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("В этой сдаче: \(live.tricks) \(TableText.plural(live.tricks, "взятка", "взятки", "взяток")), \(live.points) \(TableText.plural(live.points, "очко", "очка", "очков"))")
+        .accessibilityLabel("В этой сдаче: \(tricks), \(points)")
     }
 }

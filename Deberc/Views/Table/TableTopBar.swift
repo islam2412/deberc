@@ -9,12 +9,14 @@ struct TableCommands {
     var showLastTrick: () -> Void = {}
     /// Карточка соперника на месте (характер, уровень, счёт против него).
     var showPersona: (Int) -> Void = { _ in }
+    /// Меню стола (≡).
+    var showMenu: () -> Void = {}
     var leave: () -> Void = {}
 }
 
 /// Верхняя полоса стола: меню и козырь; вдвоём между ними — соперник, под ним его карты и взятки.
-/// Колода лежит на столе у левого края, цель партии и висячие очки — вертикальной надписью
-/// у правого (`TableDecorations`).
+/// Колода лежит на столе у левого края, номер сдачи и цель партии — вертикальной надписью
+/// у правого (`TableDecorations`); висячие очки и пересдачи — золотом под козырем (`PotChip`).
 struct TableTopBar: View {
     @EnvironmentObject private var store: GameStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -32,10 +34,12 @@ struct TableTopBar: View {
     var body: some View {
         Group {
             if let opponent {
-                // Соперник — в одной полосе с меню и козырем (тесно — без звёзд уровня); иначе — строкой ниже.
-                ViewThatFits(in: .horizontal) {
-                    topRow(opponent, stars: true)
-                    topRow(opponent, stars: false)
+                // Одна полоса или две — решено заранее по ширине окна и размеру текста (`opponentInTopBar`),
+                // а не по нынешнему счёту: полоса не перескакивает посреди партии. В одной полосе плашка
+                // сама убирает звёзды и полоску прогресса, если счёт длинный.
+                if metrics.opponentInTopBar {
+                    topRow(opponent)
+                } else {
                     VStack(spacing: metrics.spacing) {
                         barRow
                         OpponentCluster(info: opponent, metrics: metrics, commands: commands,
@@ -47,7 +51,8 @@ struct TableTopBar: View {
             }
         }
         .padding(.horizontal, metrics.gutter)
-        // Смена варианта раскладки (козырь стал шире, соперник переехал) — сразу, без затухания:
+        .padding(.top, metrics.topPadding)
+        // Смена варианта раскладки (козырь стал шире) — сразу, без затухания:
         // иначе на миг видны пустые стеклянные рамки.
         .transaction { $0.animation = nil }
         .onChange(of: deal.trump) { trump in
@@ -60,22 +65,29 @@ struct TableTopBar: View {
         }
     }
 
-    private func topRow(_ opponent: SeatInfo, stars: Bool) -> some View {
+    /// Вдвоём: меню, соперник, справа — козырь и под ним висячие очки (место есть: плашка с веером выше козыря).
+    /// Козырь и меню — по своему размеру, всё сжатие достаётся плашке соперника.
+    private func topRow(_ opponent: SeatInfo) -> some View {
         HStack(alignment: .top, spacing: 8) {
             menuButton
             Spacer(minLength: 0)
             OpponentCluster(info: opponent, metrics: metrics, commands: commands,
-                            canShowLastTrick: canShowLastTrick, showsStars: stars)
+                            canShowLastTrick: canShowLastTrick)
             Spacer(minLength: 0)
-            trumpBadge(detail: nil)
+            VStack(alignment: .trailing, spacing: 6) {
+                trumpBadge(detail: nil)
+                    .fixedSize()
+                potChip
+            }
         }
     }
 
-    /// Меню — и козырь справа.
+    /// Меню — и козырь справа (висячие очки — рядом с ним).
     private var barRow: some View {
         HStack(spacing: 8) {
             menuButton
             Spacer(minLength: 4)
+            potChip
             ViewThatFits(in: .horizontal) {
                 trumpBadge(detail: trumpDetail)
                 trumpBadge(detail: nil)
@@ -86,10 +98,22 @@ struct TableTopBar: View {
     }
 
     private var menuButton: some View {
-        TableMenuButton(commands: commands, inSummary: false, size: menuSize)
+        TableMenuButton(commands: commands, size: menuSize)
     }
 
     private var menuSize: CGFloat { metrics.roomy ? 50 : 44 }
+
+    /// На iPad в альбомной ориентации висячие очки — в панели справа.
+    @ViewBuilder
+    private var potChip: some View {
+        if !metrics.wide, let text = PotChip.text(pot: match.pot, redeals: redeals,
+                                                   forcedAfter: match.rules.forcedDealAfterRedeals) {
+            PotChip(text: text)
+        }
+    }
+
+    /// Пересдачи подряд до обязов (в сдаче на обязах — уже не считаются).
+    private var redeals: Int { deal.forced ? 0 : match.allPassStreak }
 
     private func trumpBadge(detail: String?, compact: Bool = false) -> some View {
         let round: Int?
@@ -101,7 +125,7 @@ struct TableTopBar: View {
             round = nil
         }
         return TrumpBadge(trump: deal.trump, detail: detail, biddingRound: round,
-                          height: metrics.topBarHeight, compact: compact)
+                          height: metrics.topBarHeight, compact: compact, forced: deal.forced)
             .scaleEffect(trumpFlash ? 1.1 : 1, anchor: .trailing)
             .shadow(color: Theme.gold.opacity(trumpFlash ? 0.75 : 0), radius: trumpFlash ? 10 : 0)
             .animation(trumpFlash ? .spring(response: 0.3, dampingFraction: 0.55) : .easeOut(duration: 0.45),
@@ -115,11 +139,18 @@ struct TableTopBar: View {
         return deal.forced ? "обязы · " + who : who
     }
 
-    /// Цель партии и висячие очки — для VoiceOver (на экране — вертикальная надпись у края стола).
+    /// Номер сдачи, цель партии, висячие очки и пересдачи до обязов — для VoiceOver
+    /// (на экране — вертикальная надпись у края стола и золотая строка под козырем).
     private var matchSpoken: String {
-        var text = "партия до \(match.rules.targetScore)"
-        if match.pot > 0 { text += ", висят \(match.pot) \(TableText.plural(match.pot, "очко", "очка", "очков"))" }
-        return text
+        var parts = ["сдача \(max(1, match.dealCount))", "партия до \(match.rules.targetScore)"]
+        if match.pot > 0 {
+            parts.append("висят \(match.pot) \(TableText.plural(match.pot, "очко", "очка", "очков"))")
+        }
+        let forcedAfter = match.rules.forcedDealAfterRedeals
+        if redeals > 0 && forcedAfter > 0 {
+            parts.append("пересдач \(redeals) из \(forcedAfter), дальше обязы")
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -129,17 +160,16 @@ struct OpponentCluster: View {
     let metrics: TableMetrics
     let commands: TableCommands
     let canShowLastTrick: Bool
-    var showsStars = true
 
     var body: some View {
         VStack(spacing: 4) {
             SeatPlate(info: info, avatarSize: metrics.avatarSize, maxWidth: metrics.roomy ? 320 : 230,
-                      showsStars: showsStars, onTap: { commands.showPersona(info.seat) })
+                      onTap: { commands.showPersona(info.seat) })
                 .tableSlot(.seat(info.seat))
             // Веер — ровно под плашкой, стопка взяток — справа от него (в ширину полосы не входит).
             FanSlot(seat: info.seat, metrics: metrics)
                 .overlay(alignment: .trailing) {
-                    PileSlot(seat: info.seat, tricks: info.tricks, metrics: metrics,
+                    PileSlot(seat: info.seat, owner: info.name, tricks: info.tricks, metrics: metrics,
                              enabled: canShowLastTrick, onTap: commands.showLastTrick)
                         .offset(x: metrics.pileSlotSize.width + 8)
                 }
@@ -147,18 +177,14 @@ struct OpponentCluster: View {
     }
 }
 
-/// Кнопка меню стола (≡). Та же кнопка лежит поверх окна итогов, чтобы между сдачами
-/// можно было открыть запись, настройки или выйти.
+/// Кнопка меню стола (≡): открывает меню стола (`TableMenuPanel`). Та же кнопка лежит поверх окна итогов,
+/// чтобы между сдачами можно было открыть запись, настройки или выйти.
 struct TableMenuButton: View {
-    @EnvironmentObject private var store: GameStore
     let commands: TableCommands
-    let inSummary: Bool
     var size: CGFloat = 44
 
     var body: some View {
-        Menu {
-            menuContent
-        } label: {
+        Button(action: commands.showMenu) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: size * 0.42, weight: .semibold))
                 .foregroundStyle(Theme.tableText)
@@ -166,87 +192,100 @@ struct TableMenuButton: View {
                 .tableSurface(cornerRadius: size / 2, interactive: true)
                 .contentShape(Circle())
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("Меню")
     }
+}
 
-    @ViewBuilder
-    private var menuContent: some View {
-        Section {
-            Button(action: commands.showScoreSheet) {
-                Label("Запись партии", systemImage: "list.number")
-            }
-            if store.lastTrick != nil {
-                Button(action: commands.showLastTrick) {
-                    Label("Последняя взятка", systemImage: "eye")
+/// Меню стола — своей карточкой, а не системным меню: пока она открыта, игра стоит на паузе
+/// (у системного меню нет события «открылось», и соперники ходили, пока человек читал пункты),
+/// а крупные строки легче читать и нажимать. Быстрых настроек — только звук и вибрация:
+/// скорость, автоход и прочее меняются в настройках, где у каждого пункта есть пояснение.
+struct TableMenuPanel: View {
+    @EnvironmentObject private var store: GameStore
+    @Environment(\.tableLargeControls) private var large
+    let commands: TableCommands
+    let onClose: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onClose)
+                .accessibilityHidden(true)
+            // Не помещается по высоте (маленький экран, крупный текст) — прокручивается.
+            ViewThatFits(in: .vertical) {
+                items
+                ScrollView(showsIndicators: false) {
+                    items
                 }
             }
-            Button(action: commands.showRules) {
-                Label("Правила", systemImage: "book")
-            }
+            .frame(maxWidth: 400)
+            .modalCard(cornerRadius: 26)
+            .padding(16)
+            .modalPanelAccessibility(onClose: onClose)
         }
-        if !inSummary && (store.isHumanTurn || store.canUndo) {
-            Section {
+    }
+
+    private var items: some View {
+        VStack(spacing: 10) {
+            Text("Меню")
+                .font(.title3.weight(.bold))
+                .foregroundStyle(Theme.tableText)
+                .accessibilityAddTraits(.isHeader)
+            item("Запись партии", icon: "list.number", perform: commands.showScoreSheet)
+            if store.lastTrick != nil {
+                item("Последняя взятка", icon: "eye", perform: commands.showLastTrick)
+            }
+            item("Правила", icon: "book", perform: commands.showRules)
+            if !store.showDealSummary {
                 if store.isHumanTurn {
-                    Button {
-                        store.showHint()
-                    } label: {
-                        Label("Подсказка", systemImage: "lightbulb")
-                    }
+                    item("Подсказка", icon: "lightbulb") { store.showHint() }
                 }
                 if store.canUndo {
-                    Button {
-                        store.undo()
-                    } label: {
-                        Label("Отменить ход", systemImage: "arrow.uturn.backward")
-                    }
+                    item("Отменить ход", icon: "arrow.uturn.backward") { store.undo() }
                 }
             }
-        }
-        Section("Быстрые настройки") {
-            Picker(selection: $store.settings.speed) {
-                ForEach(GameSpeed.allCases) { speed in
-                    Text(speed.title).tag(speed)
-                }
-            } label: {
-                Label("Скорость: \(store.settings.speed.title.lowercased())", systemImage: "speedometer")
-            }
-            .pickerStyle(.menu)
-            Toggle(isOn: $store.settings.confirmCardTap) {
-                Label("Ход двойным касанием", systemImage: "hand.tap")
-            }
-            Picker(selection: $store.settings.autoPlay) {
-                ForEach(AutoPlay.allCases) { mode in
-                    Text(mode.title).tag(mode)
-                }
-            } label: {
-                Label("Автоход: \(store.settings.autoPlay.title.lowercased())", systemImage: "wand.and.stars")
-            }
-            .pickerStyle(.menu)
-            Picker(selection: $store.settings.banter) {
-                ForEach(BanterLevel.allCases) { level in
-                    Text(level.title).tag(level)
-                }
-            } label: {
-                Label("Реплики: \(store.settings.banter.title.lowercased())", systemImage: "bubble.left.and.bubble.right")
-            }
-            .pickerStyle(.menu)
-            Toggle(isOn: $store.settings.soundEnabled) {
-                Label("Звук", systemImage: "speaker.wave.2")
-            }
+            toggle("Звук", icon: "speaker.wave.2", isOn: $store.settings.soundEnabled)
             // На iPad вибрации нет — как и в настройках.
             if !AppInfo.isPad {
-                Toggle(isOn: $store.settings.hapticsEnabled) {
-                    Label("Вибрация", systemImage: "iphone.radiowaves.left.and.right")
-                }
+                toggle("Вибрация", icon: "iphone.radiowaves.left.and.right", isOn: $store.settings.hapticsEnabled)
             }
-            Button(action: commands.showSettings) {
-                Label("Все настройки…", systemImage: "gearshape")
+            item("Все настройки…", icon: "gearshape", perform: commands.showSettings)
+            item("Выйти в меню", icon: "house", perform: commands.leave)
+            // Игра стоит, пока открыто меню, — главная кнопка говорит, что будет дальше.
+            Button(action: onClose) {
+                Text(store.showDealSummary ? "Закрыть" : "Продолжить игру")
+                    .frame(maxWidth: .infinity)
             }
+            .buttonStyle(TableButtonStyle(prominent: true))
+            .padding(.top, 4)
         }
-        Section {
-            Button(action: commands.leave) {
-                Label("Выйти в меню", systemImage: "house")
-            }
+        .padding(20)
+    }
+
+    /// Пункт меню: сначала меню закрывается, потом открывается лист (игра остаётся на паузе — лист тоже пауза).
+    private func item(_ title: String, icon: String, perform action: @escaping () -> Void) -> some View {
+        Button {
+            onClose()
+            action()
+        } label: {
+            Label(title, systemImage: icon)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .buttonStyle(TableButtonStyle())
+    }
+
+    private func toggle(_ title: String, icon: String, isOn: Binding<Bool>) -> some View {
+        Toggle(isOn: isOn) {
+            Label(title, systemImage: icon)
+                .font(large ? Font.title3.weight(.semibold) : Font.headline)
+                .foregroundStyle(Theme.tableText)
+        }
+        .tint(Theme.gold)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .frame(minHeight: large ? 60 : 48)
+        .tableSurface(cornerRadius: large ? 16 : 14)
     }
 }

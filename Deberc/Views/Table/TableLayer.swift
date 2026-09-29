@@ -16,12 +16,9 @@ struct TableLayerModel {
     var bannerUrgent: Bool
     /// Сдачу только что раздали (стол открылся на ней) — раздача видна с первого кадра.
     var freshDeal: Bool
-    /// Номер сдачи, цель партии, висячие очки и пересдачи подряд — для вертикальной надписи у края стола.
+    /// Номер сдачи и цель партии — для вертикальной надписи у края стола.
     var dealNumber = 0
     var target = 0
-    var pot = 0
-    var redeals = 0
-    var forcedAfter = 0
     /// Крупное объявление в центре стола (козырь).
     var announcement: TableAnnouncement?
     /// Подначка соперника.
@@ -45,7 +42,7 @@ struct TableLayer: View {
         ZStack(alignment: .topLeading) {
             CardLayerView(sprites: sprites, flight: model.flight, size: size, animateOnAppear: model.freshDeal)
                 .animation(.easeOut(duration: 0.2), value: model.scene.humanActive)
-            TableDecorations(model: model, frames: frames)
+            TableDecorations(model: model, frames: frames, size: size)
                 .frame(width: size.width, height: size.height)
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
@@ -56,6 +53,8 @@ struct TableLayer: View {
 struct TableDecorations: View {
     let model: TableLayerModel
     let frames: [TableSlot: CGRect]
+    /// Размер слоя (всего стола): отметки у мест не выходят за его края.
+    let size: CGSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.cardAppearance) private var appearance
 
@@ -63,7 +62,10 @@ struct TableDecorations: View {
     private var deal: Deal { scene.deal }
 
     var body: some View {
+        // Порядок — снизу вверх: надпись у края — фон; «печать» — поверх карт и подписей;
+        // сообщение — поверх всего («Так сейчас нельзя» не должно прятаться под печатью).
         ZStack(alignment: .topLeading) {
+            matchLabel
             ForEach(opponentSeats, id: \.self) { seat in
                 seatNote(seat)
             }
@@ -73,9 +75,8 @@ struct TableDecorations: View {
             trickNotes
             heroCaption
             bottomCardLabel
-            matchLabel
-            bannerLayer
             announcementLayer
+            bannerLayer
         }
     }
 
@@ -110,8 +111,7 @@ struct TableDecorations: View {
     @ViewBuilder
     private func seatNote(_ seat: Int) -> some View {
         if let area = seatArea(seat) {
-            let rect = CGRect(x: area.minX - 4, y: area.maxY + 6, width: area.width + 8, height: 120)
-            place(rect, noteAlignment(seat)) {
+            place(noteRect(seat, area: area), noteAlignment(seat)) {
                 VStack(spacing: 6) {
                     ZStack {
                         if let text = model.bubbles[seat] {
@@ -119,8 +119,12 @@ struct TableDecorations: View {
                                 .id("bubble-\(seat)-\(text)")
                                 .transition(noteTransition)
                         } else if let items = model.declarations[seat], !items.isEmpty {
-                            DeclarationRow(items: items, rules: model.rules, tileHeight: tileHeight)
-                                .transition(noteTransition)
+                            // Две комбинации и бэла карточками — ≈ 340 pt; не помещаются — словами.
+                            ViewThatFits(in: .horizontal) {
+                                DeclarationRow(items: items, rules: model.rules, tileHeight: scene.metrics.tileHeight)
+                                DeclarationRow(items: items, rules: model.rules, compact: true)
+                            }
+                            .transition(noteTransition)
                         }
                     }
                     // Подначка — своим облачком, под репликой торговли (если та ещё видна).
@@ -130,7 +134,6 @@ struct TableDecorations: View {
                             .transition(noteTransition)
                     }
                 }
-                .frame(maxWidth: max(area.width + 8, 240), alignment: noteAlignment(seat))
                 .animation(.easeOut(duration: 0.2), value: model.bubbles[seat])
                 .animation(.easeOut(duration: 0.25), value: model.declarations[seat] ?? [])
                 .animation(.spring(response: 0.35, dampingFraction: 0.75), value: model.taunt)
@@ -138,7 +141,26 @@ struct TableDecorations: View {
         }
     }
 
-    private var tileHeight: CGFloat { scene.metrics.roomy ? 32 : 24 }
+    /// Место под реплики и отметки соперника: под его местом и не за краями стола. Вдвоём — шириной
+    /// не меньше 240 pt (соперник один, посередине); втроём — в ширину места, чтобы отметки двух соперников
+    /// не наезжали друг на друга (а на iPad сбоку — и на центр).
+    private func noteRect(_ seat: Int, area: CGRect) -> CGRect {
+        let m = scene.metrics
+        let alignment = noteAlignment(seat)
+        let width = min(size.width - 2 * m.gutter + 8,
+                        scene.playerCount == 3 ? area.width + 8 : max(area.width + 8, 240))
+        let x: CGFloat
+        if alignment == .topLeading {
+            x = area.minX - 4
+        } else if alignment == .topTrailing {
+            x = area.maxX + 4 - width
+        } else {
+            x = area.midX - width / 2
+        }
+        let minX = m.gutter - 4
+        let maxX = size.width - m.gutter + 4 - width
+        return CGRect(x: max(minX, min(maxX, x)), y: area.maxY + 6, width: width, height: 120)
+    }
 
     private var noteTransition: AnyTransition {
         reduceMotion ? .opacity : .scale(scale: 0.85).combined(with: .opacity)
@@ -175,7 +197,11 @@ struct TableDecorations: View {
     }
 
     private var winnerCaption: String {
-        guard let winner = scene.displayedTrick?.winner else { return "" }
+        guard let trick = scene.displayedTrick, let winner = trick.winner else { return "" }
+        // За последнюю взятку сдачи — ещё 10 очков: иначе они видны только в сумме в итогах.
+        if TableScene.isLastTrick(trick, of: deal) {
+            return winner == scene.humanSeat ? "Ваша последняя · +10" : "Последняя — \(model.name(winner)) · +10"
+        }
         return winner == scene.humanSeat ? "Ваша взятка" : "Берёт \(model.name(winner))"
     }
 
@@ -193,7 +219,8 @@ struct TableDecorations: View {
 
     // MARK: - Нижняя карта колоды
 
-    /// «низ» на нижней карте колоды — поверх карты, у её нижнего края.
+    /// «низ» на нижней карте колоды — поверх карты, у её нижнего края. Шрифт — подписи стола:
+    /// 13 pt и крупнее с размером текста и в крупном режиме (было 11 pt постоянно).
     @ViewBuilder
     private var bottomCardLabel: some View {
         if deal.bottomCardVisible, deal.bottomCard != nil, let slot = frames[.deck] {
@@ -201,7 +228,7 @@ struct TableDecorations: View {
             let point = DeckGeometry.bottomCenter(slot, cardWidth: w)
             let height = DeckGeometry.bottomWidth(cardWidth: w) * CardView.aspectRatio
             Text("низ")
-                .font(.system(size: 11, weight: .bold))
+                .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.onGold)
                 .fixedSize()
                 .padding(.horizontal, 5)
@@ -216,95 +243,115 @@ struct TableDecorations: View {
     // MARK: - Объявление
 
     /// «Печать» назначенного козыря в центре стола: крупная масть, «Козырь — бубны», кто играет.
+    /// Стоит у верха центра, под полосой реплик: своя карта во взятке (она ниже центра взятки) остаётся
+    /// видна, если сходить во время печати, а сообщение внизу центра не прячется под ней.
     @ViewBuilder
     private var announcementLayer: some View {
         if let center = frames[.center] {
-            ZStack {
-                if let announcement = model.announcement {
-                    switch announcement.kind {
-                    case .trump(let seat, let suit, let forced):
-                        TrumpStamp(suit: suit,
-                                   title: (forced ? "Обязы — " : "Козырь — ") + suit.name,
-                                   subtitle: seat == model.humanSeat ? "играете вы" : "играет \(model.name(seat))")
-                            .id(announcement.id)
-                            .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
-                    case .melds(let seat, let melds, let points, let senior):
-                        MeldStamp(melds: melds, rules: model.rules,
-                                  owner: seat == model.humanSeat ? "у вас" : "у \(model.name(seat))",
-                                  points: points, senior: senior,
-                                  tileHeight: scene.metrics.roomy ? 56 : 44)
-                            .id(announcement.id)
-                            .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
+            let rect = CGRect(x: center.minX, y: center.minY + TrickGeometry.topInset, width: center.width,
+                              height: max(1, center.height - TrickGeometry.topInset))
+            place(rect, .top) {
+                ZStack {
+                    if let announcement = model.announcement {
+                        switch announcement.kind {
+                        case .trump(let seat, let suit, let forced):
+                            TrumpStamp(suit: suit,
+                                       title: (forced ? "Обязы — " : "Козырь — ") + suit.name,
+                                       subtitle: seat == model.humanSeat ? "играете вы" : "играет \(model.name(seat))")
+                                .id(announcement.id)
+                                .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
+                        case .melds(let seat, let melds, let points, let senior):
+                            MeldStamp(melds: melds, rules: model.rules,
+                                      owner: seat == model.humanSeat ? "у вас" : "у \(model.name(seat))",
+                                      points: points, senior: senior,
+                                      tileHeight: scene.metrics.roomy ? 56 : 44)
+                                .id(announcement.id)
+                                .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
+                        }
                     }
                 }
             }
-            .position(x: center.midX, y: TrickGeometry.clusterCenter(center).y)
             .allowsHitTesting(false)
         }
     }
 
     // MARK: - Цель партии
 
-    /// «ДО 701 · ВИСЯТ 40» — вертикально у правого края стола, полупрозрачно, чтобы не спорить с картами;
-    /// висячие очки и пересдачи — золотом, ярче.
+    /// «СДАЧА 3 · ДО 701» — вертикально у правого края стола. Сплошным второстепенным цветом (≈ 5:1 к сукну;
+    /// с прозрачностью было ≈ 2:1) и кеглем по крупному режиму и iPad. Вписывается в отрезок от отметок
+    /// соперников (втроём правый соперник говорит у самого края — ниже его реплик) до низа центра:
+    /// не помещается — только «до 701», совсем тесно — не показывается. Висячие очки и пересдачи —
+    /// горизонтально под козырем (`PotChip`), их важно прочесть сразу. Рисуется первой — под всем остальным.
     @ViewBuilder
     private var matchLabel: some View {
         if !scene.metrics.wide, model.target > 0, let center = frames[.center] {
-            HStack(spacing: 10) {
-                if model.dealNumber > 0 {
-                    Text("сдача \(model.dealNumber)")
-                        .foregroundStyle(Theme.tableText.opacity(0.32))
-                }
-                Text("до \(model.target)")
-                    .foregroundStyle(Theme.tableText.opacity(0.5))
-                if model.pot > 0 {
-                    Text("висят \(model.pot)")
-                        .foregroundStyle(Theme.gold.opacity(0.85))
-                } else if model.redeals > 0 && model.forcedAfter > 0 {
-                    Text("пересдач \(model.redeals)")
-                        .foregroundStyle(Theme.gold.opacity(0.85))
-                }
+            let size = scene.metrics.matchLabelSize
+            let notes: CGFloat = scene.playerCount == 3 && !scene.metrics.sideSeats ? 80 : TrickGeometry.topInset
+            let top = center.minY + notes
+            let bottom = center.maxY - 8
+            ViewThatFits(in: .horizontal) {
+                matchLabelText(dealNumber: model.dealNumber, size: size)
+                matchLabelText(dealNumber: 0, size: size)
+                Color.clear.frame(width: 0, height: 0)
             }
-            .font(.system(size: 15, weight: .heavy, design: .rounded))
-            .textCase(.uppercase)
-            .tracking(4)
-            .fixedSize()
+            .frame(width: max(0, bottom - top))
             .rotationEffect(.degrees(-90))
-            .position(x: center.maxX - 11, y: center.midY)
+            .position(x: center.maxX - (size * 0.6 + 2), y: (top + bottom) / 2)
             .accessibilityHidden(true)
         }
     }
 
+    /// Строка надписи; `dealNumber` 0 — без номера сдачи.
+    private func matchLabelText(dealNumber: Int, size: CGFloat) -> some View {
+        HStack(spacing: (size * 0.7).rounded()) {
+            if dealNumber > 0 {
+                Text("сдача \(dealNumber)")
+            }
+            Text("до \(model.target)")
+        }
+        .font(.system(size: size, weight: .heavy, design: .rounded))
+        .textCase(.uppercase)
+        .tracking(size * 0.25)
+        .foregroundStyle(Theme.tableSecondaryText)
+        .lineLimit(1)
+        .fixedSize()
+    }
+
     // MARK: - Открытая карта во время торговли
 
+    /// Подпись под открытой картой. Пока внизу центра сообщение (совет, «Ход отменён»), подпись прячется:
+    /// они стоят в одном месте, и сообщение важнее — оно гаснет само, и подпись возвращается.
     @ViewBuilder
     private var heroCaption: some View {
         if scene.heroPhase, let center = frames[.center], let text = heroText {
             let w = HeroGeometry.cardWidth(center: center, handCardWidth: scene.metrics.handCardWidth)
-            let point = HeroGeometry.captionPoint(center, cardWidth: w)
-            Text(TableText.styled(text, onLight: false, fourColor: appearance.fourColor))
-                .font(Theme.Typography.label)
-                .foregroundStyle(Theme.tableText)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
-                .frame(width: max(40, center.width - 24))
-                .position(point)
+            let rect = CGRect(x: center.minX + 12, y: HeroGeometry.captionTop(center, cardWidth: w),
+                              width: max(40, center.width - 24), height: HeroGeometry.captionSpace - 6)
+            place(rect, .top) {
+                Text(TableText.styled(text, onLight: false, fourColor: appearance.fourColor))
+                    .font(Theme.Typography.label)
+                    .foregroundStyle(Theme.tableText)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                    .opacity(model.banner == nil ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.2), value: model.banner == nil)
+            }
         }
     }
 
+    /// Круг торговли и «все пас» — в индикаторе вверху, «Все спасовали — пересдача» — в сообщении:
+    /// здесь их не повторяем, чтобы одно и то же не было на экране дважды.
     private var heroText: String? {
         switch deal.phase {
         case .bidding(let round):
             if round == 1 {
-                return "Открыта \(TableText.short(deal.openCard)) · 1-й круг"
+                return "Открыта \(TableText.short(deal.openCard))"
             }
             return "2-й круг · любая масть, кроме \(TableText.suitGenitive(deal.openCard.suit))"
         case .exchange:
             return "Обмен козырной семёрки"
-        case .finished:
-            return deal.allPassed ? "Все спасовали — пересдача" : nil
-        case .playing:
+        case .finished, .playing:
             return nil
         }
     }

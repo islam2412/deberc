@@ -11,13 +11,14 @@ struct GameView: View {
     @State private var showRules = false
     @State private var showSettings = false
     @State private var showLastTrick = false
+    @State private var showTableMenu = false
     @State private var confirmLeave = false
     /// Место соперника, чью карточку открыли.
     @State private var personaSeat: Int?
 
     var body: some View {
         GeometryReader { geo in
-            content(size: geo.size, bottomInset: geo.safeAreaInsets.bottom)
+            content(size: geo.size, safeTop: geo.safeAreaInsets.top, bottomInset: geo.safeAreaInsets.bottom)
         }
         .cardAppearance(fourColor: store.settings.fourColorDeck, largeIndex: store.settings.largeCards,
                         back: store.settings.cardBack)
@@ -48,12 +49,23 @@ struct GameView: View {
             Text("Партия сохранится — её можно продолжить из меню.")
         }
         .onChange(of: overlayOpen) { open in
-            // Пока открыт лист или диалог, игра на паузе: соперники не ходят, сообщения ждут.
+            // Пока открыт лист, диалог или меню стола, игра на паузе: соперники не ходят, сообщения ждут.
             store.isOverlayPresented = open
         }
         .onChange(of: store.isHumanTurn) { mine in
             if mine && UIAccessibility.isVoiceOverRunning {
-                UIAccessibility.post(notification: .announcement, argument: "Ваш ход")
+                // В очередь за тем, что VoiceOver уже читает: иначе «Ваш ход» обрывал объявление козыря.
+                let text = NSAttributedString(string: "Ваш ход",
+                                              attributes: [.accessibilitySpeechQueueAnnouncement: true])
+                UIAccessibility.post(notification: .announcement, argument: text)
+            }
+        }
+        .onChange(of: store.showDealSummary) { shown in
+            guard shown, UIAccessibility.isVoiceOverRunning else { return }
+            // Фокус — на итоги сдачи, а не на карту руки под ними (окно появляется с анимацией).
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                UIAccessibility.post(notification: .screenChanged, argument: nil)
             }
         }
         .onChange(of: store.lastTrick == nil) { noTrick in
@@ -66,7 +78,8 @@ struct GameView: View {
     }
 
     private var overlayOpen: Bool {
-        showScoreSheet || showRules || showSettings || showLastTrick || confirmLeave || personaSeat != nil
+        showScoreSheet || showRules || showSettings || showLastTrick || showTableMenu || confirmLeave
+            || personaSeat != nil
     }
 
     private var commands: TableCommands {
@@ -76,18 +89,26 @@ struct GameView: View {
             showSettings: { showSettings = true },
             showLastTrick: { showLastTrick = true },
             showPersona: { seat in personaSeat = seat },
+            showMenu: { showTableMenu = true },
             leave: { confirmLeave = true })
     }
 
     @ViewBuilder
-    private func content(size: CGSize, bottomInset: CGFloat) -> some View {
+    private func content(size: CGSize, safeTop: CGFloat, bottomInset: CGFloat) -> some View {
         let players = store.match?.playerCount ?? store.settings.playerCount
-        let metrics = TableMetrics(size: size, playerCount: players, large: store.settings.largeCards,
-                                   bottomInset: bottomInset)
+        let large = store.settings.largeCards
+        // Размер текста стола — с потолком (стол не разъезжается), а окна поверх него (итоги, последняя
+        // взятка, карточка соперника, меню) — как листы, до AX3: они прокручиваются или просторны.
+        let tableType = TableMetrics.typeSize(system: systemTypeSize, size: size, large: large)
+        let metrics = TableMetrics(size: size, playerCount: players, large: large, safeTop: safeTop,
+                                   bottomInset: bottomInset, typeSize: tableType)
+        // Окно итогов — под полосой меню: длинные итоги (втроём, с раскрытыми картами) не уходят под ≡.
+        let summaryTop = metrics.topPadding + metrics.topBarHeight
         ZStack {
             FeltBackground()
             if let match = store.match, let deal = match.deal {
                 TableScreen(match: match, deal: deal, metrics: metrics, commands: commands)
+                    .dynamicTypeSize(tableType)
             } else {
                 ProgressView()
                     .tint(Theme.tableText)
@@ -97,32 +118,43 @@ struct GameView: View {
                     .ignoresSafeArea()
                     .transition(.opacity)
                     .zIndex(3)
-                DealSummaryView(match: match, maxHeight: size.height - 40,
+                DealSummaryView(match: match, maxHeight: size.height - summaryTop - 40,
                                 maxWidth: min(metrics.roomy ? 640 : 560, size.width))
-                    .frame(width: size.width, height: size.height)
+                    .adaptiveTextSize(.sheet)
+                    .frame(width: size.width, height: max(1, size.height - summaryTop))
+                    .padding(.top, summaryTop)
                     .transition(reduceMotion ? .opacity : .scale(scale: 0.92).combined(with: .opacity))
                     .zIndex(4)
                 summaryMenu(metrics: metrics)
+                    .dynamicTypeSize(tableType)
                     .transition(.opacity)
                     .zIndex(5)
             }
             if showLastTrick, let trick = store.lastTrick {
-                LastTrickPanel(trick: trick, names: displayNames, cardWidth: min(110, metrics.handCardWidth),
-                               onClose: { showLastTrick = false })
+                LastTrickPanel(trick: trick, names: displayNames, maxCardWidth: min(110, metrics.handCardWidth),
+                               screenWidth: size.width, onClose: { showLastTrick = false })
+                    .adaptiveTextSize(.sheet)
                     .transition(.opacity)
                     .zIndex(6)
             }
             if let seat = personaSeat, let persona = store.persona(for: seat) {
                 PersonaPanel(persona: persona, record: store.stats.byPersona[persona.id],
                              onClose: { personaSeat = nil })
+                    .adaptiveTextSize(.sheet)
                     .transition(.opacity)
                     .zIndex(7)
+            }
+            if showTableMenu {
+                TableMenuPanel(commands: commands, onClose: { showTableMenu = false })
+                    .adaptiveTextSize(.sheet)
+                    .transition(.opacity)
+                    .zIndex(8)
             }
         }
         .animation(.easeInOut(duration: 0.25), value: store.showDealSummary)
         .animation(.easeInOut(duration: 0.2), value: showLastTrick)
         .animation(.easeInOut(duration: 0.2), value: personaSeat)
-        .dynamicTypeSize(TableMetrics.typeSize(system: systemTypeSize, size: size, large: store.settings.largeCards))
+        .animation(.easeInOut(duration: 0.2), value: showTableMenu)
         .statusBarHidden(!metrics.roomy)
     }
 
@@ -136,11 +168,12 @@ struct GameView: View {
     private func summaryMenu(metrics: TableMetrics) -> some View {
         VStack(spacing: 0) {
             HStack {
-                TableMenuButton(commands: commands, inSummary: true, size: metrics.roomy ? 50 : 44)
+                TableMenuButton(commands: commands, size: metrics.roomy ? 50 : 44)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, metrics.gutter)
             .frame(height: metrics.topBarHeight)
+            .padding(.top, metrics.topPadding)
             Spacer(minLength: 0)
         }
     }
@@ -174,6 +207,9 @@ struct TableScreen: View {
     let commands: TableCommands
     /// Карта, которую тянут пальцем из руки.
     @State private var drag: HandDrag?
+    /// Последнее сообщение стола: сами сообщения и «печати» гаснут через пару секунд и скрыты от VoiceOver
+    /// (они в слое поверх стола), а прослушанное можно повторить действием центра стола.
+    @State private var lastMessage: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -188,6 +224,12 @@ struct TableScreen: View {
         }
         // Новая сдача — никакой карты «в пальцах» от прошлой.
         .onChange(of: match.dealCount) { _ in drag = nil }
+        .onChange(of: store.banner) { banner in
+            if let banner { lastMessage = banner }
+        }
+        .onChange(of: store.announcement) { announcement in
+            if let announcement { lastMessage = spoken(announcement) }
+        }
     }
 
     // MARK: Колонка стола
@@ -242,7 +284,10 @@ struct TableScreen: View {
     }
 
     /// Центр стола: взятка (касание собирает показанную взятку), во время торговли — открытая карта;
-    /// у левого края — колода.
+    /// у левого края — колода. Вдвоём колода — посередине высоты; втроём — внизу слева: там во взятке
+    /// только своя карта по центру, а карты соперников (слева и справа, выше) колоду не задевают —
+    /// взятка растёт до высоты центра. На iPad с соперниками по бокам колода так не теснит веер левого соперника
+    /// (и сдвинута в промежуток до его колонки — `deckShift`).
     private var centerSlot: some View {
         Color.clear
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -253,17 +298,40 @@ struct TableScreen: View {
             .tableSlot(.center)
             .accessibilityElement()
             .accessibilityLabel(centerDescription)
-            .accessibilityAction(named: "Собрать взятку") {
-                store.collectTrick()
+            .accessibilityValue(store.banner ?? "")
+            .accessibilityHint(store.displayedTrick != nil ? "Коснитесь дважды, чтобы собрать взятку" : "")
+            .accessibilityActions {
+                if store.displayedTrick != nil {
+                    Button("Собрать взятку") { store.collectTrick() }
+                }
+                if let lastMessage {
+                    Button("Повторить сообщение") {
+                        UIAccessibility.post(notification: .announcement, argument: lastMessage)
+                    }
+                }
             }
-            .overlay(alignment: .leading) {
+            .overlay(alignment: match.playerCount == 3 ? .bottomLeading : .leading) {
                 let size = metrics.deckSlotSize
                 Color.clear
                     .frame(width: size.width, height: size.height)
                     .tableSlot(.deck)
                     .accessibilityElement()
                     .accessibilityLabel(deckDescription)
+                    .padding(.leading, metrics.deckShift)
             }
+    }
+
+    /// «Печать» стола словами — для повтора в VoiceOver.
+    private func spoken(_ announcement: TableAnnouncement) -> String {
+        switch announcement.kind {
+        case .trump(let seat, let suit, let forced):
+            let who = seat == store.humanSeat ? "играете вы" : "играет \(store.displayName(for: seat))"
+            return (forced ? "Обязы, козырь " : "Козырь ") + suit.name + ", " + who
+        case .melds(let seat, let melds, let points, _):
+            let owner = seat == store.humanSeat ? "у вас" : "у \(store.displayName(for: seat))"
+            let names = melds.map { $0.name(match.rules) }.joined(separator: " и ")
+            return "\(names) \(owner), плюс \(points)"
+        }
     }
 
     private var deckDescription: String {
@@ -288,7 +356,7 @@ struct TableScreen: View {
                         drag: $drag)
             .frame(maxWidth: maxWidth)
             .tableSlot(.hand)
-            .padding(.horizontal, metrics.gutter)
+            .padding(.horizontal, metrics.handInset)
             .padding(.bottom, metrics.handVisible < 1 ? 0 : 4)
     }
 
@@ -376,8 +444,11 @@ struct TableScreen: View {
         guard !trick.plays.isEmpty else { return "Стол пуст" }
         let cards = trick.plays.map { "\(store.displayName(for: $0.seat)) — \(CardView.spokenName($0.card))" }
         var text = "На столе: " + cards.joined(separator: ", ")
-        if let winner = store.displayedTrick?.winner {
+        if let displayed = store.displayedTrick, let winner = displayed.winner {
             text += ". Взятку берёт \(store.displayName(for: winner))"
+            if TableScene.isLastTrick(displayed, of: deal) {
+                text += ", последняя — плюс 10 очков"
+            }
         }
         return text
     }
@@ -419,9 +490,6 @@ struct TableScreen: View {
             freshDeal: !deal.prikupDealt && deal.tricks.isEmpty && !deal.isFinished && !reduceMotion,
             dealNumber: match.dealCount,
             target: match.rules.targetScore,
-            pot: match.pot,
-            redeals: deal.forced ? 0 : match.allPassStreak,
-            forcedAfter: match.rules.forcedDealAfterRedeals,
             announcement: store.showDealSummary ? nil : store.announcement,
             taunt: store.showDealSummary ? nil : store.taunt,
             humanSeat: store.humanSeat)

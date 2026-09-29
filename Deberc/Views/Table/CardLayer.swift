@@ -89,6 +89,11 @@ struct TableScene: Equatable {
         }
         return tricks
     }
+
+    /// Это последняя взятка сдачи (за неё — ещё 10 очков): руки пусты, и взятка — последняя сыгранная.
+    static func isLastTrick(_ trick: Trick, of deal: Deal) -> Bool {
+        deal.tricks.last == trick && deal.hands.allSatisfy { $0.isEmpty }
+    }
 }
 
 // MARK: - Раскладка карт
