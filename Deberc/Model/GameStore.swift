@@ -33,6 +33,8 @@ final class GameStore: ObservableObject {
     @Published private(set) var banner: String?
     /// Крупное объявление в центре стола (козырь назначен) — само гаснет через пару секунд.
     @Published private(set) var announcement: TableAnnouncement?
+    /// Подначка соперника в облачке у его места — сама гаснет через пару секунд.
+    @Published private(set) var taunt: TableTaunt?
     /// Сообщение срочное (ошибка хода, совет, бэла) — его можно выделить цветом.
     @Published private(set) var bannerIsUrgent = false
     /// Только что собранная взятка — лежит на столе, пока её не соберут.
@@ -71,6 +73,17 @@ final class GameStore: ObservableObject {
     private let storage: Storage
     private let sounds = SoundPlayer()
     private var rng: SplitMix64
+    /// Случайность подначек — отдельная, чтобы не менять ходы компьютеров при том же зерне.
+    private var banterRng: SplitMix64
+    private var tauntTask: Task<Void, Never>?
+    private var tauntSerial = 0
+    private var lastTauntAt = Date.distantPast
+    /// Недавние реплики — чтобы не повторяться.
+    private var recentTaunts: [String] = []
+    /// Ждём, не задумался ли человек надолго (подначка «долго думаете»).
+    private var longThinkTask: Task<Void, Never>?
+    /// В этой сдаче про раздумья уже шутили.
+    private var longThinkDeal = -1
     /// Зерно запуска: с ним автоигру можно повторить (`-DebercSeed`).
     private let launchSeed: UInt64
 
@@ -123,6 +136,7 @@ final class GameStore: ObservableObject {
         let seed = options.seed ?? fixedDemoSeed ?? UInt64.random(in: 0...UInt64.max)
         launchSeed = seed
         rng = SplitMix64(seed: seed)
+        banterRng = SplitMix64(seed: seed ^ 0xBA17_E4ED_0000_0001)
         requestedScreen = options.screenName
         sounds.soundEnabled = settings.soundEnabled && !autoplay
         sounds.hapticsEnabled = settings.hapticsEnabled && !autoplay
@@ -259,6 +273,11 @@ final class GameStore: ObservableObject {
         withAnimation(animation(.easeInOut(duration: 0.35))) {
             match = current
             process(events)
+        }
+        // Соперник вспоминает прошлую сдачу или счёт — пока раздают карты.
+        if let say = BanterTriggers.atDealStart(current, humanSeat: humanSeat, bots: botSeats,
+                                                 pick: { Int(self.banterRng.next() % UInt64($0)) }) {
+            banter(say.event, seat: say.seat, after: .milliseconds(Int(settings.speed.cardFlight * 1000) + 500))
         }
         // Пока карты разлетаются по рукам, первый торгующийся компьютер не говорит.
         hold(.milliseconds(Int(settings.speed.cardFlight * 1000) + 600))
@@ -484,6 +503,69 @@ final class GameStore: ObservableObject {
         announcement = nil
     }
 
+    // MARK: - Подначки соперников
+
+    /// Места соперников.
+    private var botSeats: [Int] {
+        (0..<(match?.playerCount ?? 0)).filter { $0 != humanSeat }
+    }
+
+    private func randomBotSeat() -> Int {
+        let bots = botSeats
+        guard !bots.isEmpty else { return humanSeat }
+        return bots[Int(banterRng.next() % UInt64(bots.count))]
+    }
+
+    /// Подначка соперника — если повод хороший и давно ничего не говорили (настройка «Реплики соперников»).
+    /// Не перебивает «печати» в центре: ждёт, пока их покажут. `after` — не раньше, чем через столько.
+    private func banter(_ event: BanterEvent, seat: Int, after delay: Duration = .zero) {
+        guard !unattended, let persona = persona(for: seat) else { return }
+        let roll = Double(banterRng.next() % 10_000) / 10_000
+        guard Banter.shouldSpeak(event, level: settings.banter, sinceLast: Date().timeIntervalSince(lastTauntAt),
+                                 roll: roll),
+              let text = Banter.line(event, persona: persona, variant: banterRng.next(),
+                                     avoid: Set(recentTaunts)) else { return }
+        lastTauntAt = Date()
+        recentTaunts.append(text)
+        if recentTaunts.count > 20 { recentTaunts.removeFirst() }
+        tauntSerial &+= 1
+        let item = TableTaunt(id: tauntSerial, seat: seat, text: text)
+        let busy = announcementsBusyUntil - .now
+        let wait = max(delay, busy)
+        let hold = max(.milliseconds(2800), settings.speed.bannerTime * 1.3)
+        tauntTask?.cancel()
+        tauntTask = Task { [weak self] in
+            guard let self else { return }
+            if wait > .zero {
+                guard await self.visibleSleep(wait) else { return }
+            }
+            withAnimation(self.animation(.spring(response: 0.35, dampingFraction: 0.72))) { self.taunt = item }
+            guard await self.visibleSleep(hold), self.taunt?.id == item.id else { return }
+            withAnimation(.easeOut(duration: 0.3)) { self.taunt = nil }
+        }
+    }
+
+    /// Человек задумался надолго — кто-нибудь из соперников пошутит (раз за сдачу).
+    private func scheduleLongThinkBanter() {
+        longThinkTask?.cancel()
+        guard settings.banter != .off, !unattended, let snapshot = match, longThinkDeal != snapshot.dealCount else { return }
+        let wait: Duration = settings.speed == .slow ? .seconds(40) : .seconds(28)
+        longThinkTask = Task { [weak self] in
+            guard let self, await self.visibleSleep(wait), !Task.isCancelled,
+                  self.match == snapshot, self.isHumanTurn else { return }
+            self.longThinkDeal = snapshot.dealCount
+            self.banter(.longThink, seat: self.randomBotSeat())
+        }
+    }
+
+    private func clearTaunt() {
+        tauntTask?.cancel()
+        tauntTask = nil
+        longThinkTask?.cancel()
+        longThinkTask = nil
+        taunt = nil
+    }
+
     /// VoiceOver проговаривает событие, у которого вместо строки внизу — «печать» в центре.
     private func speak(_ event: DealEvent, in match: Match) {
         guard UIAccessibility.isVoiceOverRunning,
@@ -582,6 +664,7 @@ final class GameStore: ObservableObject {
                     return
                 }
                 showPlayTipIfNeeded()
+                scheduleLongThinkBanter()
                 if options.scriptedHuman && options.isDemo {
                     await scriptedHumanMove()
                 }
@@ -785,6 +868,13 @@ final class GameStore: ObservableObject {
                 // Вместо строки внизу — крупная «печать» с мастью в центре стола.
                 announce(.trump(seat: seat, suit: suit, forced: forced), for: settings.speed.announcePause * 0.85)
                 speak(event, in: current)
+                if !forced {
+                    if seat == humanSeat {
+                        banter(.humanTakesGame, seat: randomBotSeat())
+                    } else {
+                        banter(.botTakesGame, seat: seat)
+                    }
+                }
                 continue
             case .playStarted(let decl):
                 // Комбинации — «печатью» с самими картами: у кого и сколько записано.
@@ -795,6 +885,7 @@ final class GameStore: ObservableObject {
                                     points: decl.meldPoints(for: winner, rules: current.rules), senior: others),
                              for: settings.speed.announcePause * (winner == humanSeat ? 0.7 : 0.9))
                     speak(event, in: current)
+                    if winner != humanSeat { banter(.botMelds, seat: winner) }
                     continue
                 }
             case .sevenExchanged:
@@ -808,11 +899,23 @@ final class GameStore: ObservableObject {
             case .bella(let seat):
                 urgent = true
                 sounds.play(.bella)
-                if seat == humanSeat { sounds.haptic(.soft) }
+                if seat == humanSeat {
+                    sounds.haptic(.soft)
+                    banter(.humanBella, seat: randomBotSeat())
+                } else {
+                    banter(.botBella, seat: seat)
+                }
             case .trickCompleted(let trick):
                 displayedTrick = trick
                 if trick.winner == humanSeat && !autoplay { sounds.haptic(.soft) }
-            case .allPassed, .fourSevens:
+                if let say = BanterTriggers.afterTrick(trick, trump: current.deal?.trump, humanSeat: humanSeat) {
+                    // Когда последняя карта легла.
+                    banter(say.event, seat: say.seat, after: .milliseconds(Int(settings.speed.cardFlight * 1000)))
+                }
+            case .allPassed:
+                bubbles = [:]
+                banter(.allPassed, seat: randomBotSeat(), after: .milliseconds(600))
+            case .fourSevens:
                 bubbles = [:]
             case .dealFinished:
                 dealEndedLive = true
@@ -957,6 +1060,7 @@ final class GameStore: ObservableObject {
         lastStepWasBot = false
         holdUntil = nil
         clearAnnouncement()
+        clearTaunt()
         bubbles = [:]
         displayedTrick = nil
         thinkingSeat = nil
@@ -984,6 +1088,7 @@ final class GameStore: ObservableObject {
             hintAction = nil
             clearBanners()
             clearAnnouncement()
+            clearTaunt()
             // Экран, который поставил паузу, уже закрыт.
             isOverlayPresented = false
         }

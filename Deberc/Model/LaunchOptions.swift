@@ -12,6 +12,7 @@ import DebercKit
 ///     -DebercSeed N                  зерно случайности — чтобы прогон повторялся
 ///     -DebercLarge YES               крупный режим (крупные карты, подписи и кнопки)
 ///     -DebercSpeed slow|normal|fast  темп игры
+///     -DebercBanter off|rare|normal|often   как часто подначивают соперники
 ///     -DebercZoom YES                показать приложение как на iPhone с «Увеличенным» видом экрана
 ///                                    (ширина 320 pt, растянутая на весь экран) — проверка тесной раскладки
 ///     -DebercScriptedHuman YES       (с -DebercScreen table) за человека ходит компьютер — через те же
@@ -39,6 +40,7 @@ struct LaunchOptions: Equatable {
     var seed: UInt64?
     var large = false
     var speed: GameSpeed?
+    var banter: BanterLevel?
     var humanDelay: Duration?
     var zoomed = false
     var dragPreview = false
@@ -75,6 +77,9 @@ struct LaunchOptions: Equatable {
         scriptedHuman = defaults.bool(forKey: "DebercScriptedHuman")
         let delay = defaults.integer(forKey: "DebercHumanDelay")
         if delay > 0 { humanDelay = .milliseconds(delay) }
+        if let raw = defaults.string(forKey: "DebercBanter") {
+            banter = BanterLevel(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+        }
         if let raw = defaults.string(forKey: "DebercSpeed") {
             speed = GameSpeed(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
         }
@@ -116,6 +121,7 @@ struct LaunchOptions: Equatable {
         }
         if autoplay { s.speed = .fast }
         if let speed { s.speed = speed }
+        if let banter { s.banter = banter }
         s.largeCards = large
         // Приветствие закрыло бы любой другой экран.
         s.hasSeenOnboarding = screen != .onboarding

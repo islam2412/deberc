@@ -49,6 +49,14 @@ struct SettingsView: View {
                 SettingLabel(title: "Автоход",
                              detail: "Когда ходить можно только одной картой, она ходит сама — в конце сдачи или всегда")
             }
+            Picker(selection: $store.settings.banter) {
+                ForEach(BanterLevel.allCases) { level in
+                    Text(level.title).tag(level)
+                }
+            } label: {
+                SettingLabel(title: "Реплики соперников",
+                             detail: "Весёлые подначки у аватара: не часто и без грубостей")
+            }
             Toggle(isOn: $store.settings.showLivePoints) {
                 SettingLabel(title: "Мои очки во время сдачи", detail: "Сколько взяток и очков у вас уже есть")
             }

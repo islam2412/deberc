@@ -464,7 +464,11 @@ struct SpeechBubble: View {
     let text: String
     /// Хвостик сверху (место выше облачка) или снизу.
     var tailOnTop = true
+    /// Подначка (а не заявка): тёплое золотистое облачко — чтобы не путать с «Пас» и «Беру».
+    var chatter = false
     @Environment(\.cardAppearance) private var appearance
+
+    private var fill: Color { chatter ? Theme.goldLight : Theme.ivory }
 
     var body: some View {
         // Масть — своим цветом, как на картах: «Беру ♦» с красной бубной.
@@ -472,7 +476,7 @@ struct SpeechBubble: View {
             .font(Theme.Typography.label)
             .foregroundStyle(Theme.onGold)
             // Одно слово («Воздержусь») не переносится по слогам, а чуть уменьшается.
-            .lineLimit(text.contains(" ") ? 2 : 1)
+            .lineLimit(text.contains(" ") ? (chatter ? 3 : 2) : 1)
             .minimumScaleFactor(0.75)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
@@ -480,16 +484,22 @@ struct SpeechBubble: View {
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Theme.ivory)
+                    .fill(fill)
                     .shadow(color: Color.black.opacity(0.3), radius: 3, x: 0, y: 2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Theme.goldDeep.opacity(chatter ? 0.6 : 0), lineWidth: 1)
             )
             .overlay(alignment: tailOnTop ? .top : .bottom) {
                 BubbleTail()
-                    .fill(Theme.ivory)
+                    .fill(fill)
                     .frame(width: 14, height: 7)
                     .rotationEffect(.degrees(tailOnTop ? 0 : 180))
                     .offset(y: tailOnTop ? -6 : 6)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(text)
     }
 }
 

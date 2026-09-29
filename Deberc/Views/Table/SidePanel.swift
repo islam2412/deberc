@@ -195,7 +195,7 @@ struct PersonaPanel: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.5)
+            Color.black.opacity(0.55)
                 .ignoresSafeArea()
                 .onTapGesture(perform: onClose)
                 .accessibilityHidden(true)
@@ -227,7 +227,7 @@ struct PersonaPanel: View {
             }
             .padding(24)
             .frame(maxWidth: 380)
-            .tableSurface(cornerRadius: 26)
+            .modalCard(cornerRadius: 26)
             .padding(24)
             .accessibilityElement(children: .contain)
         }
@@ -250,7 +250,7 @@ struct LastTrickPanel: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.5)
+            Color.black.opacity(0.55)
                 .ignoresSafeArea()
                 .onTapGesture(perform: onClose)
                 .accessibilityHidden(true)
@@ -272,7 +272,7 @@ struct LastTrickPanel: View {
                     .buttonStyle(TableButtonStyle(prominent: true))
             }
             .padding(22)
-            .tableSurface(cornerRadius: 24)
+            .modalCard(cornerRadius: 24)
             .padding(24)
             .accessibilityElement(children: .contain)
         }
@@ -299,5 +299,19 @@ struct LastTrickPanel: View {
         .frame(width: cardWidth + 8)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(name(play.seat)): \(CardView.spokenName(play.card))" + (index == 0 ? ", заход" : ""))
+    }
+}
+
+extension View {
+    /// Плотная карточка поверх стола (карточка соперника, последняя взятка): как окно итогов,
+    /// без «стекла» — сквозь него просвечивал стол, и текст читался плохо.
+    func modalCard(cornerRadius: CGFloat) -> some View {
+        background(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(ScreenStyle.cardFill)
+                .shadow(color: Color.black.opacity(0.45), radius: 18, x: 0, y: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Theme.gold.opacity(0.45), lineWidth: 1))
     }
 }

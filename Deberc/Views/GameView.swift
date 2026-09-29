@@ -421,6 +421,7 @@ struct TableScreen: View {
             redeals: deal.forced ? 0 : match.allPassStreak,
             forcedAfter: match.rules.forcedDealAfterRedeals,
             announcement: store.showDealSummary ? nil : store.announcement,
+            taunt: store.showDealSummary ? nil : store.taunt,
             humanSeat: store.humanSeat)
     }
 }

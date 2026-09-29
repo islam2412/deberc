@@ -24,6 +24,8 @@ struct TableLayerModel {
     var forcedAfter = 0
     /// Крупное объявление в центре стола (козырь).
     var announcement: TableAnnouncement?
+    /// Подначка соперника.
+    var taunt: TableTaunt?
     var humanSeat = 0
 
     func name(_ seat: Int) -> String {
@@ -108,20 +110,30 @@ struct TableDecorations: View {
     @ViewBuilder
     private func seatNote(_ seat: Int) -> some View {
         if let area = seatArea(seat) {
-            let rect = CGRect(x: area.minX - 4, y: area.maxY + 6, width: area.width + 8, height: 70)
+            let rect = CGRect(x: area.minX - 4, y: area.maxY + 6, width: area.width + 8, height: 120)
             place(rect, noteAlignment(seat)) {
-                ZStack {
-                    if let text = model.bubbles[seat] {
-                        SpeechBubble(text: text)
-                            .id("bubble-\(seat)-\(text)")
-                            .transition(noteTransition)
-                    } else if let items = model.declarations[seat], !items.isEmpty {
-                        DeclarationRow(items: items, rules: model.rules, tileHeight: tileHeight)
+                VStack(spacing: 6) {
+                    ZStack {
+                        if let text = model.bubbles[seat] {
+                            SpeechBubble(text: text)
+                                .id("bubble-\(seat)-\(text)")
+                                .transition(noteTransition)
+                        } else if let items = model.declarations[seat], !items.isEmpty {
+                            DeclarationRow(items: items, rules: model.rules, tileHeight: tileHeight)
+                                .transition(noteTransition)
+                        }
+                    }
+                    // Подначка — своим облачком, под репликой торговли (если та ещё видна).
+                    if let taunt = model.taunt, taunt.seat == seat {
+                        SpeechBubble(text: taunt.text, chatter: true)
+                            .id("taunt-\(taunt.id)")
                             .transition(noteTransition)
                     }
                 }
+                .frame(maxWidth: max(area.width + 8, 240), alignment: noteAlignment(seat))
                 .animation(.easeOut(duration: 0.2), value: model.bubbles[seat])
                 .animation(.easeOut(duration: 0.25), value: model.declarations[seat] ?? [])
+                .animation(.spring(response: 0.35, dampingFraction: 0.75), value: model.taunt)
             }
         }
     }

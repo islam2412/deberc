@@ -122,6 +122,8 @@ struct AppSettings: Codable, Equatable {
     var showLivePoints = true
     /// Последняя (или любая вынужденная) карта ходит сама.
     var autoPlay = AutoPlay.lastCard
+    /// Как часто соперники подначивают.
+    var banter = BanterLevel.normal
     var hasSeenOnboarding = false
     /// Подсказку про жесты (коснуться дважды или смахнуть карту вверх) уже показали.
     var hasSeenPlayTip = false
@@ -171,7 +173,7 @@ struct AppSettings: Codable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case rules, difficulty, opponentIDs, speed, playerName, confirmCardTap, playerCount
-        case soundEnabled, hapticsEnabled, fourColorDeck, largeCards, cardBack, showLivePoints, autoPlay
+        case soundEnabled, hapticsEnabled, fourColorDeck, largeCards, cardBack, showLivePoints, autoPlay, banter
         case hasSeenOnboarding, hasSeenPlayTip
     }
 
@@ -216,6 +218,7 @@ struct AppSettings: Codable, Equatable {
         s.cardBack = value(CardBackStyle.self, .cardBack) ?? s.cardBack
         s.showLivePoints = value(Bool.self, .showLivePoints) ?? s.showLivePoints
         s.autoPlay = value(AutoPlay.self, .autoPlay) ?? s.autoPlay
+        s.banter = value(BanterLevel.self, .banter) ?? s.banter
         s.hasSeenPlayTip = value(Bool.self, .hasSeenPlayTip) ?? s.hasSeenPlayTip
         // Настройки уже были сохранены — значит, приложение открывали: приветствие не показываем.
         s.hasSeenOnboarding = value(Bool.self, .hasSeenOnboarding) ?? true

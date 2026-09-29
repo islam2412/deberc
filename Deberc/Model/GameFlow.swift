@@ -265,6 +265,13 @@ struct TableAnnouncement: Equatable, Identifiable {
     let kind: Kind
 }
 
+/// Подначка соперника в облачке у его места.
+struct TableTaunt: Equatable, Identifiable {
+    let id: Int
+    let seat: Int
+    let text: String
+}
+
 /// Мгновенная игра компьютеров за всех — для демо-экранов (итог сдачи, конец партии, запись).
 enum DemoSimulator {
     /// Играет, пока `stop` не скажет «хватит» или партия не кончится. Раздаёт сдачи сам.

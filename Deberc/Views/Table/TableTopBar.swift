@@ -222,6 +222,14 @@ struct TableMenuButton: View {
                 Label("Автоход: \(store.settings.autoPlay.title.lowercased())", systemImage: "wand.and.stars")
             }
             .pickerStyle(.menu)
+            Picker(selection: $store.settings.banter) {
+                ForEach(BanterLevel.allCases) { level in
+                    Text(level.title).tag(level)
+                }
+            } label: {
+                Label("Реплики: \(store.settings.banter.title.lowercased())", systemImage: "bubble.left.and.bubble.right")
+            }
+            .pickerStyle(.menu)
             Toggle(isOn: $store.settings.soundEnabled) {
                 Label("Звук", systemImage: "speaker.wave.2")
             }
