@@ -412,14 +412,17 @@ struct ContinueCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Партия идёт")
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(Theme.tableText)
-                Spacer(minLength: 8)
-                Text("сдача \(dealNumber) · до \(match.rules.targetScore)")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.tableSecondaryText)
+            // Заголовок и сдача — в строку, а если тесно — друг под другом (без переносов по словам).
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .firstTextBaseline) {
+                    title
+                    Spacer(minLength: 8)
+                    dealLine
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    title
+                    dealLine
+                }
             }
             .accessibilityElement(children: .combine)
             VStack(spacing: 10) {
@@ -434,6 +437,20 @@ struct ContinueCard: View {
             .buttonStyle(TableButtonStyle(prominent: true))
         }
         .screenPanel(highlighted: true)
+    }
+
+    private var title: some View {
+        Text("Партия идёт")
+            .font(.title2.weight(.bold))
+            .foregroundStyle(Theme.tableText)
+            .lineLimit(1)
+    }
+
+    private var dealLine: some View {
+        Text("сдача \(dealNumber) · до \(match.rules.targetScore)")
+            .font(.subheadline)
+            .foregroundStyle(Theme.tableSecondaryText)
+            .lineLimit(1)
     }
 
     private func playerRow(_ seat: Int) -> some View {

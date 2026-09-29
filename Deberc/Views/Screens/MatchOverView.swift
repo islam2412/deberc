@@ -29,14 +29,17 @@ struct MatchOverView: View {
             FeltBackground()
             GeometryReader { geo in
                 let large = min(geo.size.width, geo.size.height) >= 600
+                let narrow = geo.size.width < 360
                 ScrollView {
-                    card(large: large)
+                    card(large: large, narrow: narrow)
                         .frame(maxWidth: large ? 620 : 520)
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, narrow ? 10 : 16)
                         .padding(.vertical, 24)
                         .frame(maxWidth: .infinity, minHeight: geo.size.height)
                 }
                 .scrollBounceBehavior(.basedOnSize)
+                // На узком экране таблица и кнопки со словами целиком помещаются только до этого размера.
+                .dynamicTypeSize(...(narrow ? DynamicTypeSize.xxxLarge : DynamicTypeSize.accessibility3))
             }
             if humanWon && !reduceMotion {
                 ConfettiView()
@@ -58,16 +61,16 @@ struct MatchOverView: View {
         }
     }
 
-    private func card(large: Bool) -> some View {
+    private func card(large: Bool, narrow: Bool) -> some View {
         VStack(spacing: 20) {
             header
             standingsList
-            factsSection
+            factsSection(narrow: narrow)
             adviceSection
             lastDealSection
             buttons
         }
-        .padding(22)
+        .padding(narrow ? 14 : 22)
         .background(
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .fill(ScreenStyle.cardFill)
@@ -155,59 +158,128 @@ struct MatchOverView: View {
 
     // MARK: - Как прошла партия
 
-    private var factsSection: some View {
+    private func factsSection(narrow: Bool) -> some View {
         let played = match.history.filter { $0.wasPlayed }
         let redeals = match.history.count - played.count
+        let count = redeals > 0
+            ? "\(RuPlural.count(played.count, "сдача", "сдачи", "сдач")), пересдач \(redeals)"
+            : RuPlural.count(played.count, "сдача", "сдачи", "сдач")
         return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Как прошла партия")
-                    .font(.headline)
-                Spacer()
-                Text(redeals > 0
-                     ? "\(RuPlural.count(played.count, "сдача", "сдачи", "сдач")), пересдач \(redeals)"
-                     : RuPlural.count(played.count, "сдача", "сдачи", "сдач"))
-                    .font(.footnote)
-                    .foregroundStyle(Theme.tableSecondaryText)
-            }
-            Grid(alignment: .trailing, horizontalSpacing: 12, verticalSpacing: 6) {
-                GridRow {
-                    Text("")
-                    factHeader("Играл")
-                    factHeader("Сделал")
-                    factHeader("Байт")
-                    factHeader("Голый")
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    factsTitle
+                    Spacer()
+                    factsCount(count)
                 }
-                ForEach(standings, id: \.self) { seat in
-                    factRow(seat, played: played)
+                VStack(alignment: .leading, spacing: 2) {
+                    factsTitle
+                    factsCount(count)
                 }
             }
-            .font(.subheadline.monospacedDigit())
+            // Заголовки столбцов не переносятся по слогам: тесно — таблица мельче.
+            ViewThatFits(in: .horizontal) {
+                factsGrid(played: played, font: .subheadline, header: .caption, spacing: 12)
+                factsGrid(played: played, font: .footnote, header: .caption2, spacing: 8)
+                // Совсем тесно — та же таблица «набок»: строки — показатели, столбцы — игроки.
+                factsByPlayer(played: played)
+            }
         }
-        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(narrow ? 10 : 14)
         .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.black.opacity(0.2)))
     }
 
-    private func factHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
+    private var factsTitle: some View {
+        Text("Как прошла партия")
+            .font(.headline)
+    }
+
+    private func factsCount(_ text: String) -> some View {
+        Text(text)
+            .font(.footnote)
             .foregroundStyle(Theme.tableSecondaryText)
     }
 
-    private func factRow(_ seat: Int, played: [DealScore]) -> some View {
+    private func factsGrid(played: [DealScore], font: Font, header: Font, spacing: CGFloat) -> some View {
+        Grid(alignment: .trailing, horizontalSpacing: spacing, verticalSpacing: 6) {
+            GridRow {
+                Text("")
+                factHeader("Играл", font: header)
+                factHeader("Сделал", font: header)
+                factHeader("Байт", font: header)
+                factHeader("Голый", font: header)
+            }
+            ForEach(standings, id: \.self) { seat in
+                factRow(seat, played: played)
+            }
+        }
+        .font(font.monospacedDigit())
+    }
+
+    private func factHeader(_ title: String, font: Font) -> some View {
+        Text(title)
+            .font(font.weight(.semibold))
+            .foregroundStyle(Theme.tableSecondaryText)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+    }
+
+    /// Итоги игрока за партию: сколько раз играл, сделал, байтов, голых.
+    private func facts(_ seat: Int, played: [DealScore]) -> (played: Int, made: Int, baits: Int, naked: Int) {
         let asBidder = played.filter { $0.bidder == seat }
         let made = asBidder.filter { $0.outcome == .made }.count
         let baits = asBidder.filter { $0.outcome == .bait || $0.outcome == .hanging }.count
         let naked = match.nakedCounts.indices.contains(seat) ? match.nakedCounts[seat] : 0
+        return (asBidder.count, made, baits, naked)
+    }
+
+    private func factRow(_ seat: Int, played: [DealScore]) -> some View {
+        let f = facts(seat, played: played)
         return GridRow {
             Text(seats.column(seat))
                 .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .gridColumnAlignment(.leading)
-            Text("\(asBidder.count)")
-            Text("\(made)")
-                .foregroundStyle(made > 0 ? ScreenStyle.positive : Theme.tableText)
-            Text("\(baits)")
-                .foregroundStyle(baits > 0 ? ScreenStyle.negative : Theme.tableText)
-            Text("\(naked)")
+            Text("\(f.played)")
+            Text("\(f.made)")
+                .foregroundStyle(f.made > 0 ? ScreenStyle.positive : Theme.tableText)
+            Text("\(f.baits)")
+                .foregroundStyle(f.baits > 0 ? ScreenStyle.negative : Theme.tableText)
+            Text("\(f.naked)")
+        }
+    }
+
+    private func factsByPlayer(played: [DealScore]) -> some View {
+        let all = standings.map { facts($0, played: played) }
+        return Grid(alignment: .trailing, horizontalSpacing: 10, verticalSpacing: 6) {
+            GridRow {
+                Text("")
+                ForEach(standings, id: \.self) { seat in
+                    Text(seats.column(seat))
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Theme.tableSecondaryText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+            }
+            factLine("Играл", all.map { ($0.played, Theme.tableText) })
+            factLine("Сделал", all.map { ($0.made, $0.made > 0 ? ScreenStyle.positive : Theme.tableText) })
+            factLine("Байт", all.map { ($0.baits, $0.baits > 0 ? ScreenStyle.negative : Theme.tableText) })
+            factLine("Голый", all.map { ($0.naked, Theme.tableText) })
+        }
+        .font(.subheadline.monospacedDigit())
+    }
+
+    private func factLine(_ title: String, _ values: [(Int, Color)]) -> some View {
+        GridRow {
+            Text(title)
+                .foregroundStyle(Theme.tableSecondaryText)
+                .lineLimit(1)
+                .gridColumnAlignment(.leading)
+            ForEach(values.indices, id: \.self) { index in
+                Text("\(values[index].0)")
+                    .foregroundStyle(values[index].1)
+            }
         }
     }
 
@@ -297,27 +369,20 @@ struct MatchOverView: View {
             }
             .buttonStyle(TableButtonStyle(prominent: true))
 
-            HStack(spacing: 10) {
-                Button {
-                    store.newGame()
-                } label: {
-                    Label("Новая партия", systemImage: "suit.spade.fill")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .frame(maxWidth: .infinity)
+            // «Новая партия» и «Запись»: в ряд, если помещаются словами целиком, иначе — друг под другом.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    newGameButton(icon: true)
+                    scoreSheetButton(icon: true)
                 }
-                .buttonStyle(TableButtonStyle())
-                .accessibilityHint("С соперниками и правилами из меню")
-
-                Button {
-                    showScoreSheet = true
-                } label: {
-                    Label("Запись", systemImage: "list.number")
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .frame(maxWidth: .infinity)
+                HStack(spacing: 10) {
+                    newGameButton(icon: false)
+                    scoreSheetButton(icon: false)
                 }
-                .buttonStyle(TableButtonStyle())
+                VStack(spacing: 10) {
+                    newGameButton(icon: true)
+                    scoreSheetButton(icon: true)
+                }
             }
 
             Button {
@@ -328,6 +393,27 @@ struct MatchOverView: View {
             }
             .buttonStyle(TableButtonStyle())
         }
+    }
+}
+
+extension MatchOverView {
+    fileprivate func newGameButton(icon: Bool) -> some View {
+        Button {
+            store.newGame()
+        } label: {
+            SummaryButtonLabel(title: "Новая партия", systemImage: icon ? "suit.spade.fill" : nil)
+        }
+        .buttonStyle(TableButtonStyle())
+        .accessibilityHint("С соперниками и правилами из меню")
+    }
+
+    fileprivate func scoreSheetButton(icon: Bool) -> some View {
+        Button {
+            showScoreSheet = true
+        } label: {
+            SummaryButtonLabel(title: "Запись", systemImage: icon ? "list.number" : nil)
+        }
+        .buttonStyle(TableButtonStyle())
     }
 }
 

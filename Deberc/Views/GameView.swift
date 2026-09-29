@@ -92,7 +92,8 @@ struct GameView: View {
                     .ignoresSafeArea()
                     .transition(.opacity)
                     .zIndex(3)
-                DealSummaryView(match: match, maxHeight: size.height - 40, maxWidth: metrics.roomy ? 640 : 560)
+                DealSummaryView(match: match, maxHeight: size.height - 40,
+                                maxWidth: min(metrics.roomy ? 640 : 560, size.width))
                     .frame(width: size.width, height: size.height)
                     .transition(reduceMotion ? .opacity : .scale(scale: 0.92).combined(with: .opacity))
                     .zIndex(4)

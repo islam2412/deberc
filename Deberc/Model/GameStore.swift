@@ -87,6 +87,9 @@ final class GameStore: ObservableObject {
     private var lastActivity = Date()
     private var pauseEpoch = 0
     private var lastStepWasBot = false
+    /// Раньше этого времени компьютер не ходит: только что назначили козырь, поменяли семёрку,
+    /// раздали карты — это должно быть видно (`GameFlow.pause(after:speed:humanSeat:)`).
+    private var holdUntil: ContinuousClock.Instant?
     private var normalizingSettings = false
     private var autoplayDeals = 0
     private var autoplayMatches = 0
@@ -99,7 +102,7 @@ final class GameStore: ObservableObject {
     private static let repeatTapGuard: TimeInterval = 0.4
 
     init() {
-        let options = LaunchOptions(defaults: .standard)
+        let options = LaunchOptions.current
         let storage = Storage(space: options.isDemo ? .demo : .user)
         self.options = options
         self.autoplay = options.autoplay
@@ -239,6 +242,8 @@ final class GameStore: ObservableObject {
             match = current
             process(events)
         }
+        // Пока карты разлетаются по рукам, первый торгующийся компьютер не говорит.
+        hold(.milliseconds(Int(settings.speed.cardFlight * 1000) + 600))
         sounds.play(.deal)
         noteActivity()
         persist()
@@ -403,6 +408,15 @@ final class GameStore: ObservableObject {
         }
     }
 
+    /// Главное сообщение сдачи (козырь, обмен семёрки): в очереди, но держится полное время.
+    private func showImportantBanner(_ text: String) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if bannerQueue.pushInfo(text, current: banner, important: true), bannerTask == nil {
+            pumpBanners()
+        }
+    }
+
     // MARK: - Приложение
 
     /// Приложение на экране (сцена активна) или нет: не на экране — пауза и сохранение.
@@ -492,6 +506,15 @@ final class GameStore: ObservableObject {
     /// Ход компьютера: считает в фоне, «думает» по трудности решения, затем ходит.
     /// false — цикл нужно остановить.
     private func botMove(_ seat: Int) async -> Bool {
+        // Сначала — пауза после важного события (козырь, обмен семёрки): соперник «смотрит» вместе со всеми.
+        if let until = holdUntil {
+            holdUntil = nil
+            let now = ContinuousClock.now
+            if until > now {
+                thinkingSeat = nil
+                guard await visibleSleep(until - now) else { return false }
+            }
+        }
         guard let snapshot = match else { return false }
         thinkingSeat = seat == humanSeat ? nil : seat
         let bot = makeBot(for: seat)
@@ -506,7 +529,8 @@ final class GameStore: ObservableObject {
         }.value
         if Task.isCancelled { return false }
 
-        let target = ThinkingTime.delay(base: settings.speed.botDelay, weight: decision.1, jitter: jitter)
+        var target = ThinkingTime.delay(base: settings.speed.botDelay, weight: decision.1, jitter: jitter)
+        if autoplay, seat == humanSeat, let delay = options.humanDelay { target = max(target, delay) }
         let elapsed = started.duration(to: clock.now)
         if target > elapsed {
             guard await visibleSleep(target - elapsed) else { return false }
@@ -558,6 +582,15 @@ final class GameStore: ObservableObject {
         guard displayedTrick != nil else { return }
         withAnimation(animation(.easeInOut(duration: 0.35))) { displayedTrick = nil }
         sounds.play(.collect)
+        // Взятка улетает в стопку — следующий заход не раньше, чем стол опустеет.
+        hold(.milliseconds(Int(settings.speed.cardFlight * 1000) + 150))
+    }
+
+    /// Компьютер не ходит раньше чем через `pause` (если уже ждёт дольше — не сокращать).
+    private func hold(_ pause: Duration) {
+        let until = ContinuousClock.now + pause
+        if let current = holdUntil, current > until { return }
+        holdUntil = until
     }
 
     private func presentSummary() {
@@ -602,16 +635,22 @@ final class GameStore: ObservableObject {
 
     private func process(_ events: [DealEvent]) {
         guard let current = match else { return }
+        if let pause = GameFlow.pause(after: events, speed: settings.speed, humanSeat: humanSeat) {
+            hold(pause)
+        }
         for event in events {
             var urgent = false
+            var important = false
             switch event {
             case .bid(let bid):
                 bubbles[bid.seat] = phrase(for: bid)
-            case .playStarted:
-                bubbles = [:]
+            case .trumpChosen, .sevenExchanged:
+                important = true
             case .prikupDealt:
                 sounds.play(.deal)
             case .cardPlayed:
+                // Реплики торговли («Беру ♦», «Пас») видны до первой карты розыгрыша.
+                if !bubbles.isEmpty { bubbles = [:] }
                 sounds.play(.card)
             case .bella(let seat):
                 urgent = true
@@ -633,7 +672,11 @@ final class GameStore: ObservableObject {
             }
             // `current` — партия уже после хода: при пересдаче сообщение предупредит о сдаче на обязах.
             if let text = Narrator.message(for: event, in: current, humanSeat: humanSeat) {
-                showBanner(text, urgent: urgent)
+                if important && !urgent {
+                    showImportantBanner(text)
+                } else {
+                    showBanner(text, urgent: urgent)
+                }
             }
         }
     }
@@ -759,6 +802,7 @@ final class GameStore: ObservableObject {
     private func resetTransient() {
         dealEndedLive = false
         lastStepWasBot = false
+        holdUntil = nil
         bubbles = [:]
         displayedTrick = nil
         thinkingSeat = nil

@@ -13,26 +13,52 @@ struct TableCommands {
 /// Верхняя полоса стола: меню, колода с открытой и нижней картой, цель партии, козырь.
 struct TableTopBar: View {
     @EnvironmentObject private var store: GameStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let match: Match
     let deal: Deal
     let metrics: TableMetrics
     let commands: TableCommands
+
+    /// Только что назначили козырь — индикатор ненадолго вспыхивает.
+    @State private var trumpFlash = false
 
     var body: some View {
         HStack(spacing: 8) {
             TableMenuButton(commands: commands, inSummary: false, size: menuSize)
             deckSlot
             Spacer(minLength: 4)
+            // Главное справа — козырь словом; цель партии и кто играет — если помещаются.
             ViewThatFits(in: .horizontal) {
-                MatchInfoBadge(target: match.rules.targetScore, pot: match.pot,
-                               redeals: deal.forced ? 0 : match.allPassStreak,
-                               forcedAfter: match.rules.forcedDealAfterRedeals)
-                Color.clear.frame(width: 0, height: 0)
+                HStack(spacing: 8) {
+                    matchInfo
+                    trumpBadge(detail: trumpDetail)
+                }
+                HStack(spacing: 8) {
+                    matchInfo
+                    trumpBadge(detail: nil)
+                }
+                trumpBadge(detail: nil)
+                trumpBadge(detail: nil, compact: true)
             }
-            trumpBadge
+            .scaleEffect(trumpFlash ? 1.1 : 1, anchor: .trailing)
+            .shadow(color: Theme.gold.opacity(trumpFlash ? 0.75 : 0), radius: trumpFlash ? 10 : 0)
         }
         .padding(.horizontal, metrics.gutter)
         .frame(height: metrics.topBarHeight)
+        .onChange(of: deal.trump) { trump in
+            guard trump != nil, !reduceMotion else { return }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.55)) { trumpFlash = true }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 1_300_000_000)
+                withAnimation(.easeOut(duration: 0.45)) { trumpFlash = false }
+            }
+        }
+    }
+
+    private var matchInfo: some View {
+        MatchInfoBadge(target: match.rules.targetScore, pot: match.pot,
+                       redeals: deal.forced ? 0 : match.allPassStreak,
+                       forcedAfter: match.rules.forcedDealAfterRedeals)
     }
 
     private var menuSize: CGFloat { metrics.roomy ? 50 : 44 }
@@ -45,10 +71,7 @@ struct TableTopBar: View {
                 .frame(width: size.width, height: size.height)
                 .tableSlot(.deck)
             if deal.bottomCardVisible, deal.bottomCard != nil {
-                Text("низ")
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(Theme.tableSecondaryText)
-                    .fixedSize()
+                // Подпись «низ» слой карт кладёт прямо на карту: рядом с ней места нет — оно нужно козырю справа.
                 Color.clear
                     .frame(width: metrics.miniCardWidth, height: size.height)
                     .tableSlot(.bottom)
@@ -66,7 +89,7 @@ struct TableTopBar: View {
         return parts.joined(separator: ", ")
     }
 
-    private var trumpBadge: some View {
+    private func trumpBadge(detail: String?, compact: Bool = false) -> some View {
         let round: Int?
         if case .bidding(let r) = deal.phase {
             round = r
@@ -75,11 +98,8 @@ struct TableTopBar: View {
         } else {
             round = nil
         }
-        return ViewThatFits(in: .horizontal) {
-            TrumpBadge(trump: deal.trump, detail: trumpDetail, biddingRound: round, height: metrics.topBarHeight)
-            TrumpBadge(trump: deal.trump, detail: nil, biddingRound: round, height: metrics.topBarHeight)
-            TrumpBadge(trump: deal.trump, detail: nil, biddingRound: round, height: metrics.topBarHeight, compact: true)
-        }
+        return TrumpBadge(trump: deal.trump, detail: detail, biddingRound: round,
+                          height: metrics.topBarHeight, compact: compact)
     }
 
     private var trumpDetail: String? {

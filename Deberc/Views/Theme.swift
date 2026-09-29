@@ -5,8 +5,8 @@ import DebercKit
 ///
 /// Контраст (WCAG 2.x) проверен на самом светлом месте сукна (`feltCenter`):
 /// `tableText` 6.6:1, `tableSecondaryText` 5.3:1, `gold` 4.9:1, красная масть на карте 5.6:1,
-/// текст на золотой кнопке 13:1. Значки мастей прямо на сукне (`tableSuitColor`) — 3.8:1 и выше
-/// (норма для графики 3:1); для мелких меток лучше `SuitBadge`.
+/// текст на золотой кнопке 13:1. Масти в тексте на сукне и тёмных плашках (`tableSuitColor`) — 3:1 и выше
+/// на самом светлом месте сукна и 6:1 на плашке (норма для графики 3:1); для мелких меток лучше `SuitBadge`.
 enum Theme {
     // MARK: Сукно
 
@@ -65,14 +65,15 @@ enum Theme {
         }
     }
 
-    /// Цвет значка масти прямо на сукне или тёмной плашке.
+    /// Цвет масти в тексте прямо на сукне или на тёмной плашке (сообщения, подписи):
+    /// черви и бубны — красные, пики и трефы — светлые, как «чёрные» масти на тёмном.
     /// Для самых важных меток лучше `SuitBadge` — масть настоящим цветом на светлой плашке.
     static func tableSuitColor(_ suit: Suit, fourColor: Bool) -> Color {
         switch suit {
         case .spades: return tableText
-        case .hearts: return rgb(0xFFA8A8)
-        case .diamonds: return fourColor ? rgb(0xA6CFFF) : rgb(0xFFA8A8)
-        case .clubs: return fourColor ? rgb(0xA8F0C2) : tableText
+        case .hearts: return rgb(0xFF8C8C)
+        case .diamonds: return fourColor ? rgb(0x8CC2FF) : rgb(0xFF8C8C)
+        case .clubs: return fourColor ? rgb(0x8FE3AE) : tableText
         }
     }
 
@@ -315,9 +316,11 @@ struct TableButtonStyle: ButtonStyle {
     var prominent = false
     /// nil — брать из окружения (`tableLargeControls`).
     var large: Bool? = nil
+    /// Кнопка-значок (подсказка, отмена): узкие поля, чтобы в тесном ряду словам на других кнопках хватило места.
+    var compact = false
 
     func makeBody(configuration: Configuration) -> some View {
-        TableButtonBody(configuration: configuration, prominent: prominent, large: large)
+        TableButtonBody(configuration: configuration, prominent: prominent, large: large, compact: compact)
     }
 }
 
@@ -325,6 +328,7 @@ private struct TableButtonBody: View {
     let configuration: ButtonStyleConfiguration
     let prominent: Bool
     let large: Bool?
+    let compact: Bool
 
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.colorSchemeContrast) private var contrast
@@ -337,7 +341,7 @@ private struct TableButtonBody: View {
         let label = configuration.label
             .font(isLarge ? Font.title3.weight(.semibold) : Font.headline)
             .multilineTextAlignment(.center)
-            .padding(.horizontal, isLarge ? 22 : 18)
+            .padding(.horizontal, compact ? 12 : 16)
             .padding(.vertical, isLarge ? 14 : 12)
             .frame(minHeight: isLarge ? 60 : 48)
             .foregroundStyle(prominent ? Theme.onGold : Theme.tableText)

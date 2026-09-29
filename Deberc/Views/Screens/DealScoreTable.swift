@@ -10,8 +10,20 @@ struct DealScoreTable: View {
     private var n: Int { score.change.count }
 
     var body: some View {
-        Grid(alignment: .trailing, horizontalSpacing: 14, verticalSpacing: 7) {
-            header
+        // Втроём на узком экране с крупным текстом подписи строк не должны ломаться переносами —
+        // тогда таблица мельче.
+        ViewThatFits(in: .horizontal) {
+            table(font: .body, spacing: 14)
+            table(font: .callout, spacing: 10)
+            table(font: .footnote, spacing: 8, compact: true)
+        }
+        .foregroundStyle(Theme.tableText)
+    }
+
+    /// `compact` — самый тесный вариант: имена и «Записано» тоже мельче.
+    private func table(font: Font, spacing: CGFloat, compact: Bool = false) -> some View {
+        Grid(alignment: .trailing, horizontalSpacing: spacing, verticalSpacing: 7) {
+            header(compact: compact)
             rule
             if score.wasPlayed {
                 playedRows
@@ -19,34 +31,33 @@ struct DealScoreTable: View {
                 valueRow("Бонус", score.bonus, signed: true)
             }
             rule
-            writtenRow
+            writtenRow(compact: compact)
         }
-        .font(.body.monospacedDigit())
-        .foregroundStyle(Theme.tableText)
+        .font(font.monospacedDigit())
     }
 
     // MARK: - Строки
 
-    private var header: some View {
+    private func header(compact: Bool) -> some View {
         GridRow {
             Color.clear
                 .frame(width: 1, height: 1)
                 .gridCellUnsizedAxes([.horizontal, .vertical])
             ForEach(0 ..< n, id: \.self) { seat in
-                headerCell(seat)
+                headerCell(seat, compact: compact)
             }
         }
     }
 
-    private func headerCell(_ seat: Int) -> some View {
+    private func headerCell(_ seat: Int, compact: Bool) -> some View {
         let isBidder = score.wasPlayed && score.bidder == seat
         return VStack(alignment: .trailing, spacing: 2) {
             HStack(spacing: 4) {
                 if isBidder, let trump = score.trump {
-                    SuitBadge(suit: trump, size: 18)
+                    SuitBadge(suit: trump, size: compact ? 15 : 18)
                 }
                 Text(seats.column(seat))
-                    .font(.subheadline.weight(.bold))
+                    .font((compact ? Font.footnote : Font.subheadline).weight(.bold))
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                     .foregroundStyle(isBidder ? Theme.gold : Theme.tableText)
@@ -86,19 +97,21 @@ struct DealScoreTable: View {
         }
     }
 
-    private var writtenRow: some View {
+    private func writtenRow(compact: Bool) -> some View {
         GridRow {
             Text("Записано")
-                .font(.body.weight(.semibold))
+                .fontWeight(.semibold)
                 .foregroundStyle(Theme.tableSecondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .gridColumnAlignment(.leading)
             ForEach(0 ..< n, id: \.self) { seat in
-                writtenCell(seat)
+                writtenCell(seat, compact: compact)
             }
         }
     }
 
-    private func writtenCell(_ seat: Int) -> some View {
+    private func writtenCell(_ seat: Int, compact: Bool) -> some View {
         let value = score.change[seat]
         let mark = score.bidder == seat ? Narrator.sheetMark(score) : ""
         return HStack(spacing: 4) {
@@ -106,7 +119,7 @@ struct DealScoreTable: View {
                 ScoreMarkBadge(text: mark)
             }
             Text(Narrator.signed(value))
-                .font(.title3.weight(.bold).monospacedDigit())
+                .font((compact ? Font.headline : Font.title3).weight(.bold).monospacedDigit())
                 .foregroundStyle(ScreenStyle.change(value))
         }
         .accessibilityElement(children: .ignore)
@@ -126,6 +139,8 @@ struct DealScoreTable: View {
         GridRow {
             Text(title)
                 .foregroundStyle(Theme.tableSecondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .gridColumnAlignment(.leading)
             ForEach(0 ..< n, id: \.self) { seat in
                 let value = values.indices.contains(seat) ? values[seat] : 0

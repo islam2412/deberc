@@ -113,8 +113,9 @@ struct SeatAvatar: View {
         }
         .overlay(alignment: .bottom) {
             if isDealer {
-                DealerTag()
-                    .offset(y: size * 0.22)
+                // Шрифт — по размеру аватара, а не системного текста: иначе отметка наезжает на счёт.
+                DealerTag(fontSize: max(10, (size * 0.23).rounded()))
+                    .offset(y: size * 0.2)
             }
         }
         .accessibilityHidden(true)
@@ -135,10 +136,12 @@ struct SeatAvatar: View {
 /// Отметка сдающего: словом, а не значком.
 struct DealerTag: View {
     var text = "сдаёт"
+    /// Постоянный размер шрифта (у аватара); nil — подпись стола, растёт с размером текста.
+    var fontSize: CGFloat? = nil
 
     var body: some View {
         Text(text)
-            .font(Theme.Typography.caption)
+            .font(fontSize.map { Font.system(size: $0, weight: .bold) } ?? Theme.Typography.caption)
             .foregroundStyle(Theme.onGold)
             .lineLimit(1)
             .fixedSize()
@@ -243,23 +246,40 @@ struct SeatPlate: View {
             .minimumScaleFactor(0.75)
     }
 
+    /// Счёт и полоска до цели; тесно (узкий экран, крупный текст) — без полоски: счёт важнее.
     private var scoreLine: some View {
-        HStack(alignment: .center, spacing: 6) {
-            Text(TableText.number(info.score))
-                .font(Theme.Typography.score)
-                .foregroundStyle(Theme.tableText)
-                .contentTransition(.numericText())
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            VStack(alignment: .leading, spacing: 3) {
-                ProgressTrack(fraction: info.progress, width: avatarSize * 0.9)
-                if let marks = info.marksText {
-                    Text(marks)
-                        .font(Theme.Typography.caption)
-                        .foregroundStyle(Theme.tableSecondaryText)
-                        .lineLimit(1)
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 6) {
+                scoreText
+                VStack(alignment: .leading, spacing: 3) {
+                    ProgressTrack(fraction: info.progress, width: avatarSize * 0.9)
+                    marks
                 }
             }
+            HStack(alignment: .center, spacing: 6) {
+                scoreText
+                marks
+            }
+            scoreText
+        }
+    }
+
+    private var scoreText: some View {
+        Text(TableText.number(info.score))
+            .font(Theme.Typography.score)
+            .foregroundStyle(Theme.tableText)
+            .contentTransition(.numericText())
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+    }
+
+    @ViewBuilder
+    private var marks: some View {
+        if let marks = info.marksText {
+            Text(marks)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.tableSecondaryText)
+                .lineLimit(1)
         }
     }
 }
@@ -413,12 +433,16 @@ struct SpeechBubble: View {
     let text: String
     /// Хвостик сверху (место выше облачка) или снизу.
     var tailOnTop = true
+    @Environment(\.cardAppearance) private var appearance
 
     var body: some View {
-        Text(TableText.textSuits(text))
+        // Масть — своим цветом, как на картах: «Беру ♦» с красной бубной.
+        Text(TableText.styled(text, onLight: true, fourColor: appearance.fourColor))
             .font(Theme.Typography.label)
             .foregroundStyle(Theme.onGold)
-            .lineLimit(2)
+            // Одно слово («Воздержусь») не переносится по слогам, а чуть уменьшается.
+            .lineLimit(text.contains(" ") ? 2 : 1)
+            .minimumScaleFactor(0.75)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 12)
@@ -453,9 +477,10 @@ private struct BubbleTail: Shape {
 struct BannerView: View {
     let text: String
     var urgent = false
+    @Environment(\.cardAppearance) private var appearance
 
     var body: some View {
-        Text(TableText.textSuits(text))
+        Text(TableText.styled(text, onLight: false, fourColor: appearance.fourColor))
             .font(Theme.Typography.banner)
             .multilineTextAlignment(.center)
             .foregroundStyle(Theme.tableText)
@@ -480,10 +505,16 @@ struct TrumpBadge: View {
     let height: CGFloat
     /// Узкий вариант для тесной верхней полосы: только масть (или круг торговли).
     var compact: Bool = false
+    @Environment(\.dynamicTypeSize) private var typeSize
+
+    /// Две строки подписи помещаются в полосу только при обычных размерах текста.
+    private var twoLines: Bool { !typeSize.isAccessibilitySize }
+
+    private var badgeSize: CGFloat { min(30, height - 16) }
 
     var body: some View {
         content
-            .padding(.horizontal, compact ? 6 : 10)
+            .padding(.horizontal, compact ? 6 : 8)
             .padding(.vertical, 4)
             .frame(height: height - 6)
             .tableSurface(cornerRadius: 14, highlighted: trump != nil)
@@ -495,7 +526,7 @@ struct TrumpBadge: View {
     private var content: some View {
         if compact {
             if let trump {
-                SuitBadge(suit: trump, size: min(34, height - 16))
+                SuitBadge(suit: trump, size: badgeSize)
             } else {
                 Text(roundText)
                     .font(Theme.Typography.caption)
@@ -504,13 +535,19 @@ struct TrumpBadge: View {
                     .fixedSize()
             }
         } else if let trump {
-            HStack(spacing: 8) {
-                SuitBadge(suit: trump, size: min(34, height - 16))
+            HStack(spacing: 6) {
+                SuitBadge(suit: trump, size: badgeSize)
                 VStack(alignment: .leading, spacing: 0) {
+                    if detail == nil && twoLines {
+                        // Без «играет …» — подсказать, что это за масть.
+                        Text("козырь")
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.tableSecondaryText)
+                    }
                     Text(TableText.suitTitle(trump))
                         .font(Theme.Typography.label)
                         .foregroundStyle(Theme.tableText)
-                    if let detail {
+                    if let detail, twoLines {
                         Text(detail)
                             .font(Theme.Typography.caption)
                             .foregroundStyle(Theme.tableSecondaryText)
@@ -521,12 +558,14 @@ struct TrumpBadge: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 0) {
-                Text("Торговля")
-                    .font(Theme.Typography.label)
-                    .foregroundStyle(Theme.tableText)
+                if twoLines {
+                    Text("Торговля")
+                        .font(Theme.Typography.label)
+                        .foregroundStyle(Theme.tableText)
+                }
                 Text(roundText)
-                    .font(Theme.Typography.caption)
-                    .foregroundStyle(Theme.tableSecondaryText)
+                    .font(twoLines ? Theme.Typography.caption : Theme.Typography.label)
+                    .foregroundStyle(twoLines ? Theme.tableSecondaryText : Theme.tableText)
             }
             .lineLimit(1)
             .minimumScaleFactor(0.7)

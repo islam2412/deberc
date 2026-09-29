@@ -46,6 +46,7 @@ struct TableDecorations: View {
     let model: TableLayerModel
     let frames: [TableSlot: CGRect]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.cardAppearance) private var appearance
 
     private var scene: TableScene { model.scene }
     private var deal: Deal { scene.deal }
@@ -60,6 +61,7 @@ struct TableDecorations: View {
             }
             trickNotes
             heroCaption
+            bottomCardLabel
             bannerLayer
         }
     }
@@ -163,6 +165,24 @@ struct TableDecorations: View {
         return CGPoint(x: placed.0.x, y: placed.0.y + width * CardView.aspectRatio * 0.3)
     }
 
+    // MARK: - Нижняя карта колоды
+
+    /// «низ» на нижней карте в верхней полосе — поверх карты, у её нижнего края.
+    @ViewBuilder
+    private var bottomCardLabel: some View {
+        if let slot = frames[.bottom] {
+            let height = scene.metrics.miniCardWidth * CardView.aspectRatio
+            Text("низ")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(Theme.onGold)
+                .fixedSize()
+                .padding(.horizontal, 4)
+                .background(Capsule().fill(Theme.gold))
+                .position(x: slot.midX, y: slot.midY + height / 2 - 2)
+                .accessibilityHidden(true)
+        }
+    }
+
     // MARK: - Открытая карта во время торговли
 
     @ViewBuilder
@@ -170,7 +190,7 @@ struct TableDecorations: View {
         if scene.heroPhase, let center = frames[.center], let text = heroText {
             let w = HeroGeometry.cardWidth(center: center, handCardWidth: scene.metrics.handCardWidth)
             let point = HeroGeometry.captionPoint(center, cardWidth: w)
-            Text(text)
+            Text(TableText.styled(text, onLight: false, fourColor: appearance.fourColor))
                 .font(Theme.Typography.label)
                 .foregroundStyle(Theme.tableText)
                 .multilineTextAlignment(.center)
@@ -217,8 +237,12 @@ struct TableDecorations: View {
         }
     }
 
+    /// Новое сообщение всплывает чуть снизу, старое гаснет на месте — не наезжая на полосу игрока под ним.
+    /// (Отдельная анимация с задержкой внутри перехода не годится: сообщение, пришедшее во время
+    /// другой анимации стола, могло так и остаться невидимым.)
     private var bannerTransition: AnyTransition {
-        reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity)
+        if reduceMotion { return .opacity }
+        return .asymmetric(insertion: .opacity.combined(with: .offset(y: 10)), removal: .opacity)
     }
 }
 

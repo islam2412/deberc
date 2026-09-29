@@ -20,9 +20,19 @@ enum GameSpeed: String, Codable, CaseIterable, Identifiable {
     /// над единственной допустимой картой — короче (см. `ThinkingTime`).
     var botDelay: Duration {
         switch self {
-        case .slow: return .milliseconds(1300)
-        case .normal: return .milliseconds(800)
-        case .fast: return .milliseconds(380)
+        case .slow: return .milliseconds(1500)
+        case .normal: return .milliseconds(1000)
+        case .fast: return .milliseconds(550)
+        }
+    }
+
+    /// Пауза после важного события — назначен козырь, поменяли семёрку: соперник не ходит сразу,
+    /// чтобы было видно, что произошло (см. `GameFlow.pause(after:speed:humanSeat:)`).
+    var announcePause: Duration {
+        switch self {
+        case .slow: return .milliseconds(2600)
+        case .normal: return .milliseconds(1900)
+        case .fast: return .milliseconds(1200)
         }
     }
 

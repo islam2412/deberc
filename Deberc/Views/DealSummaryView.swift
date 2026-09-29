@@ -41,18 +41,22 @@ struct DealSummaryView: View {
     /// Невысокий экран (телефон лёжа): кнопки — в одну строку, чтобы итогам осталось место.
     private var isShort: Bool { maxHeight < 440 }
 
+    /// Узкий экран (iPhone с «Увеличенным» видом): поля меньше — тексту и кнопкам больше места.
+    private var isNarrow: Bool { maxWidth < 360 }
+    private var inset: CGFloat { isNarrow ? 14 : 20 }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView {
                 details
-                    .padding(.horizontal, 20)
-                    .padding(.top, 20)
+                    .padding(.horizontal, inset)
+                    .padding(.top, inset)
                     .padding(.bottom, 12)
             }
             .scrollBounceBehavior(.basedOnSize)
             actions
-                .padding(.horizontal, 20)
-                .padding(.bottom, 18)
+                .padding(.horizontal, inset)
+                .padding(.bottom, isNarrow ? 14 : 18)
                 .padding(.top, 6)
         }
         .frame(maxWidth: cardWidth, maxHeight: max(280, maxHeight))
@@ -65,7 +69,7 @@ struct DealSummaryView: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(Theme.gold.opacity(0.45), lineWidth: 1))
         .foregroundStyle(Theme.tableText)
-        .padding(16)
+        .padding(isNarrow ? 10 : 16)
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
         .sheet(isPresented: $showScoreSheet) {
@@ -197,38 +201,54 @@ struct DealSummaryView: View {
         Button {
             store.startNextDeal()
         } label: {
-            Label("Следующая сдача", systemImage: "arrow.forward.circle.fill")
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity)
+            // Надпись целиком: без значка, если тесно.
+            ViewThatFits(in: .horizontal) {
+                Label("Следующая сдача", systemImage: "arrow.forward.circle.fill")
+                Text("Следующая сдача")
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(TableButtonStyle(prominent: true))
     }
 
+    /// «Запись» и «В меню»: в ряд со значками, в ряд без значков или друг под другом — но всегда словами целиком.
     private var secondaryButtons: some View {
-        HStack(spacing: 10) {
-            Button {
-                openScoreSheet()
-            } label: {
-                Label("Запись", systemImage: "list.number")
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .frame(maxWidth: .infinity)
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                scoreSheetButton(icon: true)
+                menuButton(icon: true)
             }
-            .buttonStyle(TableButtonStyle())
-            .accessibilityHint("Все сдачи партии")
-
-            Button {
-                store.leaveGame()
-            } label: {
-                Label("В меню", systemImage: "house")
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .frame(maxWidth: .infinity)
+            HStack(spacing: 10) {
+                scoreSheetButton(icon: false)
+                menuButton(icon: false)
             }
-            .buttonStyle(TableButtonStyle())
-            .accessibilityHint("Партия сохранится — её можно продолжить")
+            VStack(spacing: 10) {
+                scoreSheetButton(icon: true)
+                menuButton(icon: true)
+            }
         }
+    }
+
+    private func scoreSheetButton(icon: Bool) -> some View {
+        Button {
+            openScoreSheet()
+        } label: {
+            SummaryButtonLabel(title: "Запись", systemImage: icon ? "list.number" : nil)
+        }
+        .buttonStyle(TableButtonStyle())
+        .accessibilityHint("Все сдачи партии")
+    }
+
+    private func menuButton(icon: Bool) -> some View {
+        Button {
+            store.leaveGame()
+        } label: {
+            SummaryButtonLabel(title: "В меню", systemImage: icon ? "house" : nil)
+        }
+        .buttonStyle(TableButtonStyle())
+        .accessibilityHint("Партия сохранится — её можно продолжить")
     }
 
     private func openScoreSheet() {
@@ -237,6 +257,25 @@ struct DealSummaryView: View {
         } else {
             showScoreSheet = true
         }
+    }
+}
+
+/// Подпись кнопки итогов: словом, со значком или без.
+struct SummaryButtonLabel: View {
+    let title: String
+    let systemImage: String?
+
+    var body: some View {
+        Group {
+            if let systemImage {
+                Label(title, systemImage: systemImage)
+            } else {
+                Text(title)
+            }
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .frame(maxWidth: .infinity)
     }
 }
 
@@ -304,6 +343,7 @@ struct SummaryNoteLine: View {
     let text: String
     let systemImage: String
     var tint: Color = Theme.tableSecondaryText
+    @Environment(\.cardAppearance) private var appearance
 
     /// Предупреждения и штрафы выделяются.
     static func isWarning(_ line: String) -> Bool {
@@ -315,7 +355,7 @@ struct SummaryNoteLine: View {
             Image(systemName: systemImage)
                 .foregroundStyle(tint)
                 .accessibilityHidden(true)
-            Text(text)
+            Text(TableText.styled(text, onLight: false, fourColor: appearance.fourColor))
                 .foregroundStyle(Theme.tableText)
                 .fixedSize(horizontal: false, vertical: true)
         }

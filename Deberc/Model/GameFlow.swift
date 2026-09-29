@@ -41,6 +41,34 @@ enum GameFlow {
         return .botMove(seat: actor)
     }
 
+    /// Сколько подождать со следующим ходом компьютера после событий хода: назначенный козырь,
+    /// обмен семёрки, бэла, пас соперника в торговле, прикуп — чтобы их успели увидеть. nil — не ждать.
+    static func pause(after events: [DealEvent], speed: GameSpeed, humanSeat: Int) -> Duration? {
+        var result: Duration?
+        func atLeast(_ pause: Duration) {
+            result = max(result ?? .zero, pause)
+        }
+        for event in events {
+            switch event {
+            case .trumpChosen:
+                atLeast(speed.announcePause)
+            case .sevenExchanged:
+                atLeast(speed.announcePause * 0.8)
+            case .bella:
+                atLeast(speed.announcePause * 0.5)
+            case .bid(let bid) where bid.kind == .pass && bid.seat != humanSeat:
+                // Реплику соперника «Пас» успевают прочитать до реплики следующего.
+                atLeast(speed.botDelay * 0.6)
+            case .prikupDealt:
+                // Прикуп летит в руки.
+                atLeast(.milliseconds(Int(speed.cardFlight * 1000) + 450))
+            default:
+                break
+            }
+        }
+        return result
+    }
+
     /// Фаза для файла прогресса автоигры: menu, bidding-1, exchange, playing, summary, gameover…
     static func phaseName(match: Match?, showingSummary: Bool, inGame: Bool) -> String {
         guard inGame, let match else { return "menu" }
@@ -55,17 +83,21 @@ enum GameFlow {
     }
 
     /// Реплики торговли по местам — как они выглядели бы в живой игре: последняя заявка
-    /// каждого, пока идёт торговля или обмен семёрки (нужно после «Продолжить» и отмены хода).
+    /// каждого, пока идёт торговля, обмен семёрки и до первой карты розыгрыша
+    /// (нужно после «Продолжить» и отмены хода).
     static func bubbles(for deal: Deal?, phrase: (Bid) -> String) -> [Int: String] {
         guard let deal else { return [:] }
         switch deal.phase {
         case .bidding, .exchange:
-            var result: [Int: String] = [:]
-            for bid in deal.bids { result[bid.seat] = phrase(bid) }
-            return result
-        case .playing, .finished:
+            break
+        case .playing:
+            guard deal.tricks.isEmpty && deal.currentTrick.plays.isEmpty else { return [:] }
+        case .finished:
             return [:]
         }
+        var result: [Int: String] = [:]
+        for bid in deal.bids { result[bid.seat] = phrase(bid) }
+        return result
     }
 
     /// Текст совета.
@@ -131,7 +163,7 @@ enum ThinkingTime {
     static func delay(base: Duration, weight: Double, jitter: Double) -> Duration {
         let w = weight.isFinite ? min(1, max(0, weight)) : 0.5
         let j = jitter.isFinite ? min(1.2, max(0.8, jitter)) : 1
-        let factor = min(2.0, max(0.3, (0.45 + 1.1 * w) * j))
+        let factor = min(2.0, max(0.5, (0.45 + 1.1 * w) * j))
         return base * factor
     }
 }
@@ -166,6 +198,8 @@ struct BannerQueue: Equatable {
     struct Item: Equatable {
         var text: String
         var urgent: Bool
+        /// Главное сообщение сдачи (козырь, обмен семёрки): держится полное время, даже если ждут другие.
+        var important = false
     }
 
     static let capacity = 4
@@ -176,12 +210,12 @@ struct BannerQueue: Equatable {
 
     /// Обычное сообщение. false — это повтор, добавлять не нужно.
     @discardableResult
-    mutating func pushInfo(_ text: String, current: String?) -> Bool {
+    mutating func pushInfo(_ text: String, current: String?, important: Bool = false) -> Bool {
         if items.last?.text == text { return false }
         if items.isEmpty && current == text { return false }
-        items.append(Item(text: text, urgent: false))
+        items.append(Item(text: text, urgent: false, important: important))
         while items.count > BannerQueue.capacity {
-            if let index = items.firstIndex(where: { !$0.urgent }) {
+            if let index = items.firstIndex(where: { !$0.urgent && !$0.important }) ?? items.firstIndex(where: { !$0.urgent }) {
                 items.remove(at: index)
             } else {
                 items.removeFirst()
@@ -211,6 +245,7 @@ struct BannerQueue: Equatable {
     /// Сколько держать сообщение (вызывать после `pop()`: учитывает, ждут ли следующие).
     func hold(for item: Item, base: Duration) -> Duration {
         if item.urgent { return max(.milliseconds(1600), base * 0.8) }
+        if item.important { return base }
         return items.isEmpty ? base : max(.milliseconds(1100), base * 0.6)
     }
 }

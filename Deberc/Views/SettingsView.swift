@@ -57,9 +57,9 @@ struct SettingsView: View {
                 SettingLabel(title: "Крупный режим", detail: "Крупнее карты, подписи и кнопки")
             }
             Toggle(isOn: $store.settings.fourColorDeck) {
-                HStack(spacing: 10) {
+                // Масти — под подписью, а не справа от неё: иначе «Четырёхцветная» переносится по слогам.
+                VStack(alignment: .leading, spacing: 6) {
                     SettingLabel(title: "Четырёхцветная колода", detail: "У каждой масти свой цвет")
-                    Spacer(minLength: 4)
                     HStack(spacing: 3) {
                         ForEach(Suit.allCases, id: \.self) { suit in
                             SuitBadge(suit: suit, size: 22, fourColor: store.settings.fourColorDeck)

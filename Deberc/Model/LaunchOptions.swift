@@ -9,6 +9,12 @@ import DebercKit
 ///     -DebercScreen <экран>          открыть экран: menu, table, settings, rules, scoresheet, stats,
 ///                                    onboarding, summary (итог сдачи), gameover (конец партии)
 ///     -DebercSeed N                  зерно случайности — чтобы прогон повторялся
+///     -DebercLarge YES               крупный режим (крупные карты, подписи и кнопки)
+///     -DebercSpeed slow|normal|fast  темп игры
+///     -DebercZoom YES                показать приложение как на iPhone с «Увеличенным» видом экрана
+///                                    (ширина 320 pt, растянутая на весь экран) — проверка тесной раскладки
+///     -DebercHumanDelay MS           автоигра: за человека компьютер ходит не раньше чем через MS мс,
+///                                    чтобы на снимках были видны кнопки хода
 ///
 /// С любым из `-DebercAutoplay`/`-DebercScreen` приложение работает в «демо-режиме»:
 /// настройки, партия и статистика игрока не читаются и не затираются (свой отдельный каталог),
@@ -25,8 +31,15 @@ struct LaunchOptions: Equatable {
     var screenName: String?
     var screen: Screen?
     var seed: UInt64?
+    var large = false
+    var speed: GameSpeed?
+    var humanDelay: Duration?
+    var zoomed = false
 
     var isDemo: Bool { autoplay || screenName != nil }
+
+    /// Аргументы этого запуска.
+    static let current = LaunchOptions(defaults: .standard)
 
     init() {}
 
@@ -47,6 +60,13 @@ struct LaunchOptions: Equatable {
         }
         if let raw = defaults.string(forKey: "DebercSeed") {
             seed = UInt64(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        large = defaults.bool(forKey: "DebercLarge")
+        zoomed = defaults.bool(forKey: "DebercZoom")
+        let delay = defaults.integer(forKey: "DebercHumanDelay")
+        if delay > 0 { humanDelay = .milliseconds(delay) }
+        if let raw = defaults.string(forKey: "DebercSpeed") {
+            speed = GameSpeed(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
         }
     }
 
@@ -85,6 +105,8 @@ struct LaunchOptions: Equatable {
             s.opponentIDs = AppSettings.defaultOpponentIDs(for: level)
         }
         if autoplay { s.speed = .fast }
+        if let speed { s.speed = speed }
+        s.largeCards = large
         // Приветствие закрыло бы любой другой экран.
         s.hasSeenOnboarding = screen != .onboarding
         return s

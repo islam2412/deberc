@@ -5,6 +5,7 @@ import DebercKit
 /// когда ходят соперники — кто ходит и чего ждать.
 struct ActionPanel: View {
     @EnvironmentObject private var store: GameStore
+    @Environment(\.cardAppearance) private var appearance
     let match: Match
     let deal: Deal
     let metrics: TableMetrics
@@ -16,8 +17,10 @@ struct ActionPanel: View {
                 Color.clear.frame(height: 1)
             } else if store.isHumanTurn {
                 humanControls
+                    .transition(Self.swap)
             } else {
                 waitingLine
+                    .transition(Self.swap)
             }
         }
         .frame(maxWidth: contentWidth)
@@ -25,6 +28,10 @@ struct ActionPanel: View {
         .frame(minHeight: metrics.actionMinHeight)
         .padding(.horizontal, metrics.gutter)
     }
+
+    /// Смена содержимого панели: старое исчезает сразу, новое проявляется — надписи не наезжают
+    /// друг на друга («Ваш ход» поверх «Ходит Саша…»).
+    static let swap = AnyTransition.asymmetric(insertion: .opacity, removal: .identity)
 
     // MARK: - Ход человека
 
@@ -49,34 +56,51 @@ struct ActionPanel: View {
     private var roundOne: some View {
         let suit = deal.openCard.suit
         return VStack(spacing: 6) {
-            HStack(spacing: 10) {
-                Button {
-                    store.perform(.take)
-                } label: {
-                    // На узком экране с крупным шрифтом название масти не помещается — остаётся «Беру ♣».
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) {
-                            Text("Беру")
-                            SuitBadge(suit: suit, size: 24)
-                            Text(suit.name)
-                        }
-                        HStack(spacing: 6) {
-                            Text("Беру")
-                            SuitBadge(suit: suit, size: 24)
-                        }
-                    }
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity)
+            // Слово «Беру» не должно пропадать: на узком экране с крупным шрифтом сначала уходит
+            // название масти, потом «Пас» с подсказкой переезжают во второй ряд.
+            // В ряду «Беру» забирает всё свободное место, «Пас» — по ширине слова: поровну делить нельзя,
+            // иначе длинная надпись «Беру ♣ трефы» обрезается, хотя ряд целиком помещается.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    takeButton(suit, named: true)
+                    passButton(fill: false)
+                    hintButton
                 }
-                .buttonStyle(TableButtonStyle(prominent: true))
-                .modifier(HintRing(active: store.hintAction == .take))
-                .accessibilityLabel("Беру, козырь \(suit.name)")
-
-                passButton
-                hintButton
+                HStack(spacing: 10) {
+                    takeButton(suit, named: false)
+                    passButton(fill: false)
+                    hintButton
+                }
+                VStack(spacing: 8) {
+                    takeButton(suit, named: true)
+                    HStack(spacing: 10) {
+                        passButton()
+                        hintButton
+                    }
+                }
             }
             prompt(store.bidHint ?? "Берёте? Козырь — \(suit.name)")
         }
+    }
+
+    private func takeButton(_ suit: Suit, named: Bool) -> some View {
+        Button {
+            store.perform(.take)
+        } label: {
+            HStack(spacing: 6) {
+                Text("Беру")
+                SuitBadge(suit: suit, size: 24)
+                if named {
+                    Text(suit.name)
+                }
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(TableButtonStyle(prominent: true))
+        .modifier(HintRing(active: store.hintAction == .take))
+        .accessibilityLabel("Беру, козырь \(suit.name)")
     }
 
     private var roundTwo: some View {
@@ -87,7 +111,7 @@ struct ActionPanel: View {
                     ForEach(suits, id: \.self) { suit in
                         suitButton(suit)
                     }
-                    passButton
+                    passButton()
                     hintButton
                 }
                 .fixedSize(horizontal: true, vertical: false)
@@ -95,6 +119,9 @@ struct ActionPanel: View {
                     suitGrid(suits)
                     hintButton
                 }
+                // Узкий экран с крупным текстом: мастям — вся ширина; подсказка остаётся в меню стола
+                // (лишний ряд кнопок сжал бы стол так, что открытая карта стала бы с ноготь).
+                suitGrid(suits)
             }
             // Что делать во 2-м круге, сказано под открытой картой; здесь — только совет.
             if let hint = store.bidHint {
@@ -113,7 +140,7 @@ struct ActionPanel: View {
                 }
                 GridRow {
                     suitButton(suits[2])
-                    passButton
+                    passButton()
                 }
             }
         } else {
@@ -121,7 +148,7 @@ struct ActionPanel: View {
                 ForEach(suits, id: \.self) { suit in
                     suitButton(suit)
                 }
-                passButton
+                passButton()
             }
         }
     }
@@ -143,57 +170,81 @@ struct ActionPanel: View {
         .accessibilityLabel("Козырь \(suit.name)")
     }
 
-    private var passButton: some View {
+    /// `fill` — растягиваться на свободное место (в сетке мастей и во втором ряду); иначе — по ширине слова.
+    private func passButton(fill: Bool = true) -> some View {
         Button {
             store.perform(.pass)
         } label: {
             Text("Пас")
                 .lineLimit(1)
-                .frame(maxWidth: .infinity)
+                .frame(minWidth: 44)
+                .frame(maxWidth: fill ? .infinity : nil)
         }
         .buttonStyle(TableButtonStyle())
         .modifier(HintRing(active: store.hintAction == .pass))
     }
 
     private var exchange: some View {
-        let open = deal.openCard
-        return VStack(spacing: 6) {
-            HStack(spacing: 10) {
-                Button {
-                    store.perform(.exchangeSeven(true))
-                } label: {
-                    HStack(spacing: 6) {
-                        Text("Взять")
-                        MiniTile(card: open, height: 28)
-                        Text("за 7")
+        VStack(spacing: 6) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    exchangeButton
+                    keepButton(fill: false)
+                    exchangeTools
+                }
+                // Тесно — «Взять … за 7» во всю ширину, остальное — вторым рядом.
+                VStack(spacing: 8) {
+                    exchangeButton
+                    HStack(spacing: 10) {
+                        keepButton()
+                        exchangeTools
                     }
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(TableButtonStyle(prominent: true))
-                .modifier(HintRing(active: store.hintAction == .exchangeSeven(true)))
-                .accessibilityLabel("Поменять козырную семёрку на \(CardView.spokenName(open))")
-
-                Button {
-                    store.perform(.exchangeSeven(false))
-                } label: {
-                    Text("Оставить")
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(TableButtonStyle())
-                .modifier(HintRing(active: store.hintAction == .exchangeSeven(false)))
-                .accessibilityLabel("Оставить семёрку")
-
-                // Отменить ошибочное «Беру» можно и здесь, не открывая меню. Значком — ряд и так тесный.
-                if store.canUndo {
-                    undoButton(compact: true)
-                }
-                hintButton
             }
             prompt(store.bidHint ?? "У вас козырная семёрка — поменять на открытую карту?")
         }
+    }
+
+    private var exchangeButton: some View {
+        let open = deal.openCard
+        return Button {
+            store.perform(.exchangeSeven(true))
+        } label: {
+            HStack(spacing: 6) {
+                Text("Взять")
+                MiniTile(card: open, height: 28)
+                Text("за 7")
+            }
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(TableButtonStyle(prominent: true))
+        .modifier(HintRing(active: store.hintAction == .exchangeSeven(true)))
+        .accessibilityLabel("Поменять козырную семёрку на \(CardView.spokenName(open))")
+    }
+
+    private func keepButton(fill: Bool = true) -> some View {
+        Button {
+            store.perform(.exchangeSeven(false))
+        } label: {
+            Text("Оставить")
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(maxWidth: fill ? .infinity : nil)
+        }
+        .buttonStyle(TableButtonStyle())
+        .modifier(HintRing(active: store.hintAction == .exchangeSeven(false)))
+        .accessibilityLabel("Оставить семёрку")
+    }
+
+    /// Отмена ошибочного «Беру» (значком — ряд и так тесный) и подсказка.
+    @ViewBuilder
+    private var exchangeTools: some View {
+        if store.canUndo {
+            undoButton(compact: true)
+        }
+        hintButton
     }
 
     private var playing: some View {
@@ -203,11 +254,12 @@ struct ActionPanel: View {
                     .font(Theme.Typography.seatName)
                     .foregroundStyle(Theme.gold)
                 if let subtitle = playSubtitle {
-                    Text(subtitle)
+                    Text(suited(subtitle))
                         .font(Theme.Typography.caption)
                         .foregroundStyle(Theme.tableSecondaryText)
                         .lineLimit(2)
                         .minimumScaleFactor(0.8)
+                        .contentTransition(.identity)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -246,7 +298,7 @@ struct ActionPanel: View {
             }
             .frame(minWidth: 24)
         }
-        .buttonStyle(TableButtonStyle())
+        .buttonStyle(TableButtonStyle(compact: true))
         .disabled(store.isHinting)
         .accessibilityLabel("Подсказка")
     }
@@ -268,7 +320,7 @@ struct ActionPanel: View {
                 }
             }
         }
-        .buttonStyle(TableButtonStyle())
+        .buttonStyle(TableButtonStyle(compact: compact))
         .accessibilityLabel("Отменить ход")
     }
 
@@ -283,13 +335,17 @@ struct ActionPanel: View {
                         .foregroundStyle(Theme.tableText)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
+                        .contentTransition(.identity)
+                        .transition(.identity)
                 }
                 if let subtitle = waitingSubtitle {
-                    Text(subtitle)
+                    Text(suited(subtitle))
                         .font(Theme.Typography.caption)
                         .foregroundStyle(Theme.tableSecondaryText)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
+                        .contentTransition(.identity)
+                        .transition(.identity)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -316,7 +372,7 @@ struct ActionPanel: View {
         switch deal.phase {
         case .bidding, .exchange:
             if let own = store.bubbles[store.humanSeat] {
-                return "Вы: " + TableText.textSuits(own)
+                return "Вы: " + own
             }
             return nil
         default:
@@ -324,8 +380,13 @@ struct ActionPanel: View {
         }
     }
 
+    /// Масти в подписях панели — своим цветом.
+    private func suited(_ text: String) -> AttributedString {
+        TableText.styled(text, onLight: false, fourColor: appearance.fourColor)
+    }
+
     private func prompt(_ text: String) -> some View {
-        Text(TableText.textSuits(text))
+        Text(suited(text))
             .font(Theme.Typography.caption)
             .foregroundStyle(store.bidHint != nil ? Theme.gold : Theme.tableSecondaryText)
             .multilineTextAlignment(.center)

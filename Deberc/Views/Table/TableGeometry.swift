@@ -117,7 +117,9 @@ struct TableMetrics: Equatable {
     var actionMinHeight: CGFloat { roomy ? (large ? 72 : 62) : (large ? 64 : 52) }
 
     /// Размер текста за столом: на iPad крупнее, на iPhone — с потолком, чтобы стол не разъезжался;
-    /// крупный режим поднимает на две ступени.
+    /// крупный режим поднимает на две ступени. На узком экране (iPhone с «Увеличенным» видом, 320 pt)
+    /// потолок ниже: там всё и так крупнее на четверть, а с бо́льшим текстом кнопки торговли уходят
+    /// во второй ряд и сжимают стол.
     static func typeSize(system: DynamicTypeSize, size: CGSize, large: Bool) -> DynamicTypeSize {
         let all = DynamicTypeSize.allCases
         var result = system
@@ -132,6 +134,8 @@ struct TableMetrics: Equatable {
         let cap: DynamicTypeSize
         if roomy {
             cap = .accessibility2
+        } else if size.width < 350 {
+            cap = .xxLarge
         } else {
             cap = large ? .accessibility1 : .xxLarge
         }
@@ -291,14 +295,33 @@ enum TableText {
         }
     }
 
-    /// Масти в тексте — всегда текстом, а не эмодзи.
-    static func textSuits(_ text: String) -> String {
-        var result = text
-        for suit in Suit.allCases {
-            result = result.replacingOccurrences(of: suit.symbol, with: suit.glyph)
+    /// Текст с мастями своего цвета (масти — всегда текстом, не эмодзи).
+    /// `onLight` — на слоновой кости (реплики игроков): как на картах; иначе — для сукна и тёмных плашек.
+    static func styled(_ text: String, onLight: Bool, fourColor: Bool) -> AttributedString {
+        var result = AttributedString()
+        var plain = ""
+        func flush() {
+            guard !plain.isEmpty else { return }
+            result.append(AttributedString(plain))
+            plain = ""
         }
-        // Если в строке уже был селектор варианта — не удваиваем.
-        return result.replacingOccurrences(of: "\u{FE0E}\u{FE0E}", with: "\u{FE0E}")
+        for character in text {
+            // «♦» и «♦︎» (с селектором варианта) — один символ.
+            if let scalar = character.unicodeScalars.first,
+               let suit = Suit.allCases.first(where: { $0.symbol.unicodeScalars.first == scalar }) {
+                flush()
+                var glyph = AttributedString(suit.glyph)
+                let color: Color = onLight
+                    ? Theme.suitColor(suit, fourColor: fourColor)
+                    : Theme.tableSuitColor(suit, fourColor: fourColor)
+                glyph.foregroundColor = color
+                result.append(glyph)
+            } else {
+                plain.append(character)
+            }
+        }
+        flush()
+        return result
     }
 
     /// «Т♥», «10♠» — короткая запись карты.
