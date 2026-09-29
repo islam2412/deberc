@@ -91,7 +91,8 @@ private struct ZoomedCanvas<Content: View>: View {
 /// Симулятор сам не поворачивается, поэтому окно поворачивает приложение. В режиме
 /// «Приложения в окнах» iPadOS 26 система этого не разрешает — тогда приложение раскладывается
 /// в размер экрана, повёрнутого набок, и уменьшается до ширины окна (как `ZoomedCanvas`);
-/// сверху и снизу остаются чёрные поля. На iPhone ничего не делает.
+/// сверху и снизу остаются чёрные поля. Листы (sheet) система и тогда показывает в настоящем,
+/// книжном окне — их раскладку так не проверить. На iPhone ничего не делает.
 @available(iOS 17, *)
 private struct DemoLandscape<Content: View>: View {
     @ViewBuilder let content: () -> Content
@@ -99,26 +100,22 @@ private struct DemoLandscape<Content: View>: View {
     @State private var emulated = false
 
     var body: some View {
-        Group {
-            if emulated {
-                GeometryReader { geo in
-                    let long = max(geo.size.width, geo.size.height)
-                    let short = min(geo.size.width, geo.size.height)
-                    let scale = geo.size.width / long
-                    content()
-                        // Строка состояния и полоска «Домой» iPad в альбомной ориентации.
-                        .safeAreaPadding(EdgeInsets(top: 24, leading: 0, bottom: 20, trailing: 0))
-                        .frame(width: long, height: short)
-                        .scaleEffect(scale, anchor: .topLeading)
-                        .frame(width: geo.size.width, height: short * scale, alignment: .topLeading)
-                        .frame(width: geo.size.width, height: geo.size.height)
-                }
-                .background(Color.black)
-                .ignoresSafeArea()
-            } else {
-                content()
-            }
+        // Одно дерево на оба случая: при переходе к своему альбомному экрану приложение
+        // не создаётся заново (иначе закрылся бы открытый демо-режимом лист).
+        GeometryReader { geo in
+            let long = max(geo.size.width, geo.size.height)
+            let short = min(geo.size.width, geo.size.height)
+            let scale = emulated ? geo.size.width / long : 1
+            content()
+                // Строка состояния и полоска «Домой» iPad в альбомной ориентации.
+                .safeAreaPadding(emulated ? EdgeInsets(top: 24, leading: 0, bottom: 20, trailing: 0) : EdgeInsets())
+                .frame(width: emulated ? long : geo.size.width, height: emulated ? short : geo.size.height)
+                .scaleEffect(scale, anchor: .topLeading)
+                .frame(width: geo.size.width, height: emulated ? short * scale : geo.size.height, alignment: .topLeading)
+                .frame(width: geo.size.width, height: geo.size.height)
         }
+        .background { if emulated { Color.black } }
+        .ignoresSafeArea(edges: emulated ? .all : [])
         .onAppear(perform: rotate)
     }
 
