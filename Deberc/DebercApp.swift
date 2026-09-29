@@ -14,6 +14,11 @@ struct DebercApp: App {
                     RootView()
                         .environmentObject(store)
                 }
+            } else if #available(iOS 17, *), LaunchOptions.current.landscape {
+                DemoLandscape {
+                    RootView()
+                        .environmentObject(store)
+                }
             } else {
                 RootView()
                     .environmentObject(store)
@@ -79,5 +84,61 @@ private struct ZoomedCanvas<Content: View>: View {
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
         }
         .ignoresSafeArea()
+    }
+}
+
+/// Снимки iPad в альбомной ориентации (`-DebercOrientation landscape`, только демо-режим).
+/// Симулятор сам не поворачивается, поэтому окно поворачивает приложение. В режиме
+/// «Приложения в окнах» iPadOS 26 система этого не разрешает — тогда приложение раскладывается
+/// в размер экрана, повёрнутого набок, и уменьшается до ширины окна (как `ZoomedCanvas`);
+/// сверху и снизу остаются чёрные поля. Листы (sheet) система и тогда показывает в настоящем,
+/// книжном окне — их раскладку так не проверить. На iPhone ничего не делает.
+@available(iOS 17, *)
+private struct DemoLandscape<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    /// Система не повернула окно — альбомный экран рисуем сами.
+    @State private var emulated = false
+
+    var body: some View {
+        // Одно дерево на оба случая: при переходе к своему альбомному экрану приложение
+        // не создаётся заново (иначе закрылся бы открытый демо-режимом лист).
+        GeometryReader { geo in
+            let long = max(geo.size.width, geo.size.height)
+            let short = min(geo.size.width, geo.size.height)
+            let scale = emulated ? geo.size.width / long : 1
+            content()
+                // Строка состояния и полоска «Домой» iPad в альбомной ориентации.
+                .safeAreaPadding(emulated ? EdgeInsets(top: 24, leading: 0, bottom: 20, trailing: 0) : EdgeInsets())
+                .frame(width: emulated ? long : geo.size.width, height: emulated ? short : geo.size.height)
+                .scaleEffect(scale, anchor: .topLeading)
+                .frame(width: geo.size.width, height: emulated ? short * scale : geo.size.height, alignment: .topLeading)
+                // Край своего альбомного экрана — как край дисплея: что за него уходит (низ руки),
+                // не рисуется поверх чёрных полей, и снимок совпадает с тем, что видно на iPad.
+                .clipShape(ScreenEdge(active: emulated))
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .background { if emulated { Color.black } }
+        .ignoresSafeArea(edges: emulated ? .all : [])
+        .onAppear(perform: rotate)
+    }
+
+    private func rotate() {
+        guard UIDevice.current.userInterfaceIdiom == .pad,
+              let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene else { return }
+        let emulated = $emulated
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { error in
+            Diagnostics.log("Окно не повернулось (\(error.localizedDescription)) — альбомный экран рисуем сами")
+            Task { @MainActor in emulated.wrappedValue = true }
+        }
+    }
+}
+
+/// Обрезка по кадру, которую можно выключить, не пересоздавая содержимое: выключенная
+/// (окно повернула система) ничего не обрезает — фон стола по-прежнему уходит под строку состояния.
+private struct ScreenEdge: Shape {
+    let active: Bool
+
+    func path(in rect: CGRect) -> Path {
+        Path(active ? rect : rect.insetBy(dx: -rect.width, dy: -rect.height))
     }
 }

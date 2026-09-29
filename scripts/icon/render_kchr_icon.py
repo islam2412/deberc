@@ -199,10 +199,15 @@ def place(canvas, card, center, angle, shadow=True):
     rotated = card.rotate(-angle, resample=Image.BICUBIC, expand=True)
     pos = (int(center[0] - rotated.width / 2), int(center[1] - rotated.height / 2))
     if shadow:
-        sh = Image.new("RGBA", rotated.size, (0, 0, 0, 0))
-        sh.putalpha(rotated.getchannel("A").point(lambda v: int(v * 0.55)))
+        # Тень размываем на холсте с полем: без него размытие упиралось в край холста карты,
+        # и на иконке оставался прямой шов (x ≈ 317, y ≈ 906–920 при 1024 px).
+        pad = int(S * 0.06)
+        sh = Image.new("RGBA", (rotated.width + 2 * pad, rotated.height + 2 * pad), (0, 0, 0, 0))
+        alpha = Image.new("L", sh.size, 0)
+        alpha.paste(rotated.getchannel("A").point(lambda v: int(v * 0.55)), (pad, pad))
+        sh.putalpha(alpha)
         sh = sh.filter(ImageFilter.GaussianBlur(S * 0.02))
-        canvas.alpha_composite(sh, (pos[0], pos[1] + int(S * 0.02)))
+        canvas.alpha_composite(sh, (pos[0] - pad, pos[1] - pad + int(S * 0.02)))
     canvas.alpha_composite(rotated, pos)
 
 

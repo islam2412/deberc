@@ -120,6 +120,9 @@ jobs:
           checks = [
               ("MinimumOSVersion", info.get("MinimumOSVersion"), "16.4"),
               ("UILaunchScreen.UIColorName", info.get("UILaunchScreen", {}).get("UIColorName"), "LaunchBackground"),
+              # Одно окно на iPad: манифест из Config/Info.plist, а не сгенерированный Xcode.
+              ("UIApplicationSceneManifest.UIApplicationSupportsMultipleScenes",
+               info.get("UIApplicationSceneManifest", {}).get("UIApplicationSupportsMultipleScenes"), False),
               ("ITSAppUsesNonExemptEncryption", info.get("ITSAppUsesNonExemptEncryption"), False),
               ("UIUserInterfaceStyle", info.get("UIUserInterfaceStyle"), "Dark"),
               ("CFBundleDisplayName", info.get("CFBundleDisplayName"), "Деберц"),

@@ -6,11 +6,20 @@
   INFOPLIST_KEY_… в project.pbxproj) и сливает с этим файлом. Не повторяйте здесь те ключи.
   UILaunchScreen → UIColorName: экран запуска цвета сукна (Assets.xcassets/LaunchBackground)
   вместо чёрной вспышки.
+  UIApplicationSceneManifest → UIApplicationSupportsMultipleScenes = false: на iPad одно окно игры.
+  Партия и настройки у приложения одни на все окна, второе окно показывало бы ту же партию.
+  Для этого в проекте INFOPLIST_KEY_UIApplicationSceneManifest_Generation = NO: сгенерированный
+  манифест (с несколькими окнами) перекрыл бы этот.
   Файл лежит вне папки Deberc/: всё, что внутри неё, Xcode кладёт в ресурсы,
   и второй Info.plist сломал бы сборку («Multiple commands produce Info.plist»).
 -->
 <plist version="1.0">
 <dict>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

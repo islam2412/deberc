@@ -23,7 +23,9 @@
 
 Для фигур:
 
-> Style: traditional 19th-century engraved playing-card illustration, like a hand-colored copperplate etching: crisp dark ink contour lines, fine engraved hatching and cross-hatching for shading, flat rich colors; palette of deep crimson, cobalt blue, emerald green, golden ochre, silver-grey, black and warm ivory. Composition: half-length figure from the waist up, front-facing, symmetrical and centered, cut off by the bottom edge of the image at waist level exactly like one half of a double-headed playing card; the hat fits inside the image with a small margin at the top. Respectful, authentic depiction of North Caucasian traditional dress. No flags, no coats of arms, no religious symbols, no suit symbols, no letters, no text, no border, no frame, no card outline. Fully transparent background.
+> Style: traditional 19th-century engraved playing-card illustration, like a hand-colored copperplate etching: crisp dark ink contour lines, fine engraved hatching and cross-hatching for shading, flat rich colors; palette of deep crimson, cobalt blue, emerald green, golden ochre, silver-grey, black and warm ivory. Composition: half-length figure from the waist up, front-facing, symmetrical and centered, cut off by the bottom edge of the image at waist level exactly like one half of a double-headed playing card; leave about 8% empty margin on the left and on the right, and about 4% empty margin above the headdress, so the hat and shoulders never touch the edges. Respectful, authentic depiction of North Caucasian traditional dress. No flags, no coats of arms, no religious symbols, no suit symbols, no letters, no text, no border, no frame, no card outline. Fully transparent background.
+
+Поля — ≈8 % пустого места слева и справа, ≈4 % над убором: иначе на карте убор и плечи упираются в край портрета.
 
 Перед стилем идёт `Court card figure for a classic playing card, the KING OF SPADES, in a Karachay-Cherkessia themed deck. Subject: …` — описание героя из таблицы, по-английски, с деталями костюма.
 
@@ -37,6 +39,12 @@
 
     python3 scripts/icon/render_kchr_icon.py preview /tmp/icons   # все варианты для сравнения
     python3 scripts/icon/render_kchr_icon.py install jack-back     # AppIcon, AppIcon-Dark, AppIcon-Tinted
+
+Если исходников Higgsfield под рукой нет, для `jack-back` хватит готовых картинок из каталога (только `prepare_art.py` с такой папкой потом не запускайте — он обработал бы уже готовые картинки ещё раз):
+
+    mkdir -p art-raw
+    cp Deberc/Assets.xcassets/Art/court-jack-spades.imageset/court-jack-spades.png \
+       Deberc/Assets.xcassets/Art/back-ornament.imageset/back-ornament.png art-raw/
 
 Основная иконка сохраняется без альфа-канала (иначе App Store отклонит сборку), тёмная — с прозрачным фоном, тонированная — оттенки серого на чёрном.
 
