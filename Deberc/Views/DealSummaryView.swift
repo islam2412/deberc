@@ -5,7 +5,7 @@ import DebercKit
 ///
 /// Исход крупно (значок: сделано / байт / висячий), таблица сдачи со столбцом играющего
 /// и окрашенным «Записано», засчитанные комбинации, пояснения и предупреждения о штрафах,
-/// счёт партии с полосками до цели и раскрывающиеся «Карты всех игроков».
+/// счёт партии с полосками до цели, раскрывающиеся «Карты всех игроков» и «Взятки по порядку».
 /// Внизу — «Следующая сдача», «Запись» и «В меню» (партия сохраняется).
 ///
 /// Конец партии показывает `MatchOverView` поверх стола (его ставит `RootView`);
@@ -20,6 +20,7 @@ struct DealSummaryView: View {
     let onShowScoreSheet: (() -> Void)?
 
     @State private var showHands = false
+    @State private var showTricks = false
     @State private var showScoreSheet = false
 
     init(match: Match, maxHeight: CGFloat, maxWidth: CGFloat = 560, onShowScoreSheet: (() -> Void)? = nil) {
@@ -98,11 +99,14 @@ struct DealSummaryView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 handsSection(score)
-                ProblemReportLink(title: "Что-то не так? Отправить сдачу",
-                                  subject: "Деберц: сдача \(score.number)")
-                    .font(.footnote)
-                    .foregroundStyle(Theme.tableSecondaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                // Проверяющим (TestFlight) — прямо здесь; в сборке из App Store — только в Настройках.
+                if AppInfo.isTestBuild {
+                    ProblemReportLink(title: "Что-то не так? Отправить сдачу",
+                                      subject: "Деберц: сдача \(score.number)")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.tableSecondaryText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
         }
     }
@@ -126,28 +130,22 @@ struct DealSummaryView: View {
         }
     }
 
+    /// Разбор сдачи: что было на руках и как шли взятки — после байта видно, где ошибся.
     @ViewBuilder
     private func handsSection(_ score: DealScore) -> some View {
         if score.wasPlayed, let deal = match.deal, deal.isFinished, !deal.tricks.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) { showHands.toggle() }
-                } label: {
-                    HStack {
-                        Label("Карты всех игроков", systemImage: "rectangle.on.rectangle.angled")
-                            .font(.subheadline.weight(.semibold))
-                        Spacer()
-                        Image(systemName: "chevron.down")
-                            .rotationEffect(.degrees(showHands ? 180 : 0))
-                    }
-                    .foregroundStyle(Theme.gold)
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityValue(showHands ? "открыто" : "закрыто")
+                disclosure("Карты всех игроков", systemImage: "rectangle.on.rectangle.angled", isOpen: $showHands)
                 if showHands {
                     HandsRevealView(deal: deal, score: score, seats: seats, cardWidth: isLarge ? 54 : 40)
+                        .transition(.opacity)
+                }
+                Divider()
+                    .overlay(Color.white.opacity(0.15))
+                disclosure("Взятки по порядку", systemImage: "list.number", isOpen: $showTricks)
+                if showTricks {
+                    TricksReplayView(deal: deal, seats: seats, tileHeight: isLarge ? 40 : 32)
+                        .padding(.bottom, 6)
                         .transition(.opacity)
                 }
             }
@@ -155,6 +153,27 @@ struct DealSummaryView: View {
             .padding(.vertical, 4)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.black.opacity(0.2)))
         }
+    }
+
+    /// Раскрывающийся заголовок разбора: название слева, стрелка справа.
+    private func disclosure(_ title: String, systemImage: String, isOpen: Binding<Bool>) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.25)) { isOpen.wrappedValue.toggle() }
+        } label: {
+            HStack {
+                Label(title, systemImage: systemImage)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .rotationEffect(.degrees(isOpen.wrappedValue ? 180 : 0))
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(Theme.gold)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityValue(isOpen.wrappedValue ? "открыто" : "закрыто")
     }
 
     private var matchOverFallback: some View {
@@ -314,7 +333,19 @@ struct OutcomeHeader: View {
         }
         .font(.subheadline)
         .foregroundStyle(Theme.tableSecondaryText)
-        .accessibilityElement(children: .combine)
+        // Словами, без «точки» между частями: «Сдача 3, играет Саша, козырь черви».
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenSubtitle)
+    }
+
+    private var spokenSubtitle: String {
+        var parts = ["Сдача \(score.number)"]
+        if score.wasPlayed, let bidder = score.bidder, let trump = score.trump {
+            parts.append(bidder == seats.humanSeat ? "играете вы" : "играет \(seats.speaker(bidder))")
+            parts.append("козырь \(trump.name)")
+            if score.forced { parts.append("обязы") }
+        }
+        return parts.joined(separator: ", ")
     }
 
     private var icon: String {
@@ -358,6 +389,8 @@ struct SummaryNoteLine: View {
             Text(TableText.styled(text, onLight: false, fourColor: appearance.fourColor))
                 .foregroundStyle(Theme.tableText)
                 .fixedSize(horizontal: false, vertical: true)
+                // «полтинник от десятки до короля треф», а не «10 дефис В дефис Д…».
+                .accessibilityLabel(Narrator.spoken(text))
         }
         .font(.footnote)
     }
