@@ -61,13 +61,22 @@ struct StatsView: View {
 
     private var headline: some View {
         let total = stats.total
+        // «12 из 30» не разрывается между строками.
+        let wins = "Побед: \(total.won)\u{00A0}из\u{00A0}\(total.played)"
+        let share = percent(total.won, total.played)
         return VStack(alignment: .leading, spacing: 6) {
-            // Одной строкой: «Побед: 12 из 30 · 40 %» на узком экране чуть мельче, но без переноса.
-            Text("Побед: \(total.won) из \(total.played) · \(percent(total.won, total.played))")
-                .font(.title.weight(.bold))
-                .foregroundStyle(Theme.tableText)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            // Одной строкой «Побед: 12 из 30 · 40 %», а если не помещается (крупный шрифт) —
+            // доля побед строкой ниже: ничего не обрезается.
+            ViewThatFits(in: .horizontal) {
+                Text("\(wins) · \(share)")
+                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(wins)
+                    Text(share)
+                }
+            }
+            .font(.title.weight(.bold))
+            .foregroundStyle(Theme.tableText)
             GoalProgressBar(value: total.won, target: max(1, total.played), height: 10)
             Text(streakText)
                 .font(.headline)

@@ -231,12 +231,23 @@ struct SettingsView: View {
 
 private extension View {
     /// На iPad лист настроек — страницей: поля по бокам, чтобы строки не растягивались на всю ширину.
-    @ViewBuilder
     func padMargins() -> some View {
-        if #available(iOS 17.0, *), AppInfo.isPad {
-            contentMargins(.horizontal, 60, for: .scrollContent)
+        modifier(PageSheetMargins())
+    }
+}
+
+/// Поля страницы — только когда лист и правда широкий: на iOS 18+ (раньше лист — форма) и в широком
+/// окне. В Split View и Slide Over окно узкое (класс ширины compact) — там полей нет, иначе строки
+/// с переключателями и пояснениями переносятся по словам.
+private struct PageSheetMargins: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *), sizeClass == .regular {
+            content.contentMargins(.horizontal, 60, for: .scrollContent)
         } else {
-            self
+            content
         }
     }
 }

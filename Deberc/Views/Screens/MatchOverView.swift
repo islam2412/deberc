@@ -33,8 +33,11 @@ struct MatchOverView: View {
                 let large = min(screen.size.width, screen.size.height) >= 600
                 let narrow = screen.size.width < 360
                 let width: CGFloat = large ? 620 : 520
-                // Невысокий экран — «Как прошла партия» сначала свёрнута, как «Последняя сдача».
-                let factsOpen = showFacts ?? (screen.size.height >= 760)
+                // «Как прошла партия» сначала открыта только там, где места с запасом: на iPad и больших
+                // iPhone (Plus, Pro Max — от 840 pt по высоте). На остальных (SE, mini, обычные и Pro —
+                // около 650–780 pt, «Увеличенный» вид) она свёрнута, как «Последняя сдача»: порог далеко
+                // от массовых моделей, и похожие телефоны ведут себя одинаково.
+                let factsOpen = showFacts ?? (large || screen.size.height >= 800)
                 // Кнопки не прокручиваются: «Реванш» виден сразу, итоги прокручиваются над ними.
                 // Карточка растягивается на высоту над кнопками — на iPad лишней прокрутки нет.
                 VStack(spacing: 0) {
@@ -54,6 +57,10 @@ struct MatchOverView: View {
                         .frame(maxWidth: width)
                         .padding(.horizontal, narrow ? 10 : 16)
                         .padding(.bottom, 8)
+                        // Кнопкам — вся нужная им высота (крупный системный шрифт — четыре ряда),
+                        // итогам — остаток. Без этого VStack делит экран пополам и сжимает кнопки.
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
                 }
                 // На узком экране таблица и кнопки со словами целиком помещаются только до этого размера.
                 .dynamicTypeSize(...(narrow ? DynamicTypeSize.xxxLarge : DynamicTypeSize.accessibility3))
@@ -279,6 +286,8 @@ struct MatchOverView: View {
 
     private func factRow(_ seat: Int, played: [DealScore]) -> some View {
         let f = facts(seat, played: played)
+        // Модификатор на GridRow достаётся каждой ячейке, поэтому фраза целиком — у имени,
+        // а числа VoiceOver пропускает: строка игрока — один элемент.
         return GridRow {
             // Имя забирает свободное место — таблица тянется на всю ширину карточки.
             Text(seats.column(seat))
@@ -286,15 +295,18 @@ struct MatchOverView: View {
                 .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .gridColumnAlignment(.leading)
+                .accessibilityLabel(spokenFacts(seat, played: played))
             Text("\(f.played)")
+                .accessibilityHidden(true)
             Text("\(f.made)")
                 .foregroundStyle(f.made > 0 ? ScreenStyle.positive : Theme.tableText)
+                .accessibilityHidden(true)
             Text("\(f.baits)")
                 .foregroundStyle(f.baits > 0 ? ScreenStyle.negative : Theme.tableText)
+                .accessibilityHidden(true)
             Text("\(f.naked)")
+                .accessibilityHidden(true)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spokenFacts(seat, played: played))
     }
 
     private func factsByPlayer(played: [DealScore]) -> some View {

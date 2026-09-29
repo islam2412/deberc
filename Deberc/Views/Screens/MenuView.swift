@@ -348,19 +348,24 @@ struct MenuView: View {
         ViewThatFits(in: .horizontal) {
             tiles(font: nil)
             tiles(font: .subheadline.weight(.semibold))
+            // Не влез и запасной кегль («Увеличенный» вид с крупным режимом, крупный системный шрифт) —
+            // все три подписи сжимаются в одно и то же число раз, по самой длинной.
+            tiles(font: .subheadline.weight(.semibold), sameScale: true)
         }
     }
+
+    private static let tileTitles = ["Правила", "Статистика", "Настройки"]
 
     /// `font` — nil: кегль из стиля плитки.
-    private func tiles(font: Font?) -> some View {
+    private func tiles(font: Font?, sameScale: Bool = false) -> some View {
         EqualWidthHStack(spacing: 10) {
-            tile("Правила", icon: "book", sheet: .rules, font: font)
-            tile("Статистика", icon: "chart.bar", sheet: .stats, font: font)
-            tile("Настройки", icon: "gearshape", sheet: .settings, font: font)
+            tile("Правила", icon: "book", sheet: .rules, font: font, sameScale: sameScale)
+            tile("Статистика", icon: "chart.bar", sheet: .stats, font: font, sameScale: sameScale)
+            tile("Настройки", icon: "gearshape", sheet: .settings, font: font, sameScale: sameScale)
         }
     }
 
-    private func tile(_ title: String, icon: String, sheet target: MenuSheet, font: Font?) -> some View {
+    private func tile(_ title: String, icon: String, sheet target: MenuSheet, font: Font?, sameScale: Bool) -> some View {
         Button {
             sheet = target
         } label: {
@@ -369,13 +374,20 @@ struct MenuView: View {
                     .font(.title2)
                     .frame(height: tileIcon)
                     .accessibilityHidden(true)
-                if let font {
-                    // Запасной кегль тоже не влез («Увеличенный» вид и крупный режим) — лучше мельче,
-                    // чем «Статисти…».
+                if sameScale {
+                    SameScaleTitle(shown: Self.tileTitles.firstIndex(of: title) ?? 0) {
+                        ForEach(Self.tileTitles, id: \.self) { other in
+                            Text(other)
+                                .opacity(other == title ? 1 : 0)
+                        }
+                    }
+                    .font(font)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.3)
+                } else if let font {
                     Text(title)
                         .font(font)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
                 } else {
                     Text(title)
                         .lineLimit(1)
@@ -479,11 +491,14 @@ struct ContinueCard: View {
                 }
             }
             Button(action: onContinue) {
-                // Всегда в одну строку: тесно — без значка, ещё теснее — короче.
+                // Всегда в одну строку и целиком: тесно — без значка, ещё теснее — короче,
+                // а при крупном системном шрифте на узком экране — одно слово, чуть мельче.
                 ViewThatFits(in: .horizontal) {
                     Label("Продолжить партию", systemImage: "play.fill")
                     Text("Продолжить партию")
                     Label("Продолжить", systemImage: "play.fill")
+                    Text("Продолжить")
+                        .minimumScaleFactor(0.6)
                 }
                 .lineLimit(1)
                 .frame(maxWidth: .infinity)
@@ -534,5 +549,41 @@ struct ContinueCard: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(store.displayName(for: seat)): \(Narrator.points(total))")
+    }
+}
+
+/// Подпись плитки в том же масштабе, что и у соседних. Подвиды — все подписи ряда, видна одна
+/// (`shown`, остальные прозрачные): если самая длинная не помещается в плитку, каждая подпись
+/// получает ширину «своя × (место / самая длинная)» и `minimumScaleFactor` сжимает все одинаково.
+private struct SameScaleTitle: Layout {
+    let shown: Int
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.indices.contains(shown) else { return .zero }
+        let widest = widestWidth(subviews)
+        let width = min(proposal.width ?? widest, widest)
+        let own = subviews[shown]
+        let height = own.sizeThatFits(ProposedViewSize(width: scaledWidth(own, widest: widest, room: width),
+                                                       height: nil)).height
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let widest = widestWidth(subviews)
+        for subview in subviews {
+            subview.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center,
+                          proposal: ProposedViewSize(width: scaledWidth(subview, widest: widest, room: bounds.width),
+                                                     height: bounds.height))
+        }
+    }
+
+    private func widestWidth(_ subviews: Subviews) -> CGFloat {
+        subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
+    }
+
+    private func scaledWidth(_ subview: LayoutSubview, widest: CGFloat, room: CGFloat) -> CGFloat {
+        let ideal = subview.sizeThatFits(.unspecified).width
+        guard widest > room, widest > 0 else { return ideal }
+        return ideal * room / widest
     }
 }

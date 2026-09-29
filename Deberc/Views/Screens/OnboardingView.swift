@@ -37,6 +37,10 @@ struct OnboardingView: View {
                     .frame(maxWidth: width)
                     .padding(.horizontal, 20)
                     .padding(.bottom, 8)
+                    // Кнопкам — вся нужная им высота (крупный шрифт на узком экране — в две-три строки),
+                    // странице — остаток. Без этого VStack делит экран пополам и сжимает кнопки.
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
             }
         }
         .background(FeltBackground())
@@ -143,8 +147,7 @@ struct OnboardingView: View {
             Button {
                 finish(startGame: true)
             } label: {
-                Label(store.canContinue ? "Продолжить партию" : "Играть", systemImage: "play.fill")
-                    .frame(maxWidth: .infinity)
+                buttonLabel(store.canContinue ? "Продолжить партию" : "Играть", systemImage: "play.fill")
             }
             .buttonStyle(TableButtonStyle(prominent: true))
             .accessibilityHint(store.canContinue ? "Вернуться к сохранённой партии" : "Партия вдвоём с соперником-любителем")
@@ -152,11 +155,21 @@ struct OnboardingView: View {
             Button {
                 finish(startGame: false)
             } label: {
-                Label("Выбрать соперников", systemImage: "person.2")
-                    .frame(maxWidth: .infinity)
+                buttonLabel("Выбрать соперников", systemImage: "person.2")
             }
             .buttonStyle(TableButtonStyle())
         }
+    }
+
+    /// Со значком — если надпись помещается в строку. Крупный шрифт на узком экране — без значка:
+    /// так слова переносятся целиком («Продолжить / партию»), а не по слогам, и кнопка ниже.
+    private func buttonLabel(_ title: String, systemImage: String) -> some View {
+        ViewThatFits(in: .horizontal) {
+            Label(title, systemImage: systemImage)
+                .lineLimit(1)
+            Text(title)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func finish(startGame: Bool) {
