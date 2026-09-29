@@ -48,14 +48,7 @@ struct CardView: View {
 
     /// «дама червей», «десятка бубен», «туз пик».
     nonisolated static func spokenName(_ card: Card) -> String {
-        let suit: String
-        switch card.suit {
-        case .spades: suit = "пик"
-        case .clubs: suit = "треф"
-        case .diamonds: suit = "бубен"
-        case .hearts: suit = "червей"
-        }
-        return "\(card.rank.name) \(suit)"
+        Narrator.spokenCard(card)
     }
 
     var body: some View {

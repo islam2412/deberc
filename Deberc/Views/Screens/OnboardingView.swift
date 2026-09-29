@@ -104,10 +104,11 @@ struct OnboardingView: View {
         return VStack(alignment: .leading, spacing: 12) {
             Toggle(isOn: $store.settings.largeCards) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Крупные карты и кнопки")
+                    Text("Крупный режим")
                         .font(.headline)
                         .foregroundStyle(Theme.tableText)
-                    Text("Легче читать и попадать пальцем. Можно поменять в Настройках → Вид.")
+                    Text("Крупнее подписи, кнопки и значки на картах — легче читать и попадать пальцем. "
+                         + "Можно поменять в Настройках → Вид.")
                         .font(.footnote)
                         .foregroundStyle(Theme.tableSecondaryText)
                         .fixedSize(horizontal: false, vertical: true)

@@ -200,7 +200,7 @@ struct TableDecorations: View {
         guard let trick = scene.displayedTrick, let winner = trick.winner else { return "" }
         // За последнюю взятку сдачи — ещё 10 очков: иначе они видны только в сумме в итогах.
         if TableScene.isLastTrick(trick, of: deal) {
-            return winner == scene.humanSeat ? "Ваша последняя · +10" : "Последняя — \(model.name(winner)) · +10"
+            return winner == scene.humanSeat ? "Последняя — ваша · +10" : "Последняя — \(model.name(winner)) · +10"
         }
         return winner == scene.humanSeat ? "Ваша взятка" : "Берёт \(model.name(winner))"
     }
@@ -220,7 +220,7 @@ struct TableDecorations: View {
     // MARK: - Нижняя карта колоды
 
     /// «низ» на нижней карте колоды — поверх карты, у её нижнего края. Шрифт — подписи стола:
-    /// 13 pt и крупнее с размером текста и в крупном режиме (было 11 pt постоянно).
+    /// 13 pt и крупнее с размером текста и в крупном режиме — не мельче остальных подписей стола.
     @ViewBuilder
     private var bottomCardLabel: some View {
         if deal.bottomCardVisible, deal.bottomCard != nil, let slot = frames[.deck] {
@@ -262,7 +262,7 @@ struct TableDecorations: View {
                                 .transition(reduceMotion ? .opacity : .scale(scale: 0.6).combined(with: .opacity))
                         case .melds(let seat, let melds, let points, let senior):
                             MeldStamp(melds: melds, rules: model.rules,
-                                      owner: seat == model.humanSeat ? "у вас" : "у \(model.name(seat))",
+                                      owner: seat == model.humanSeat ? "Вы" : model.name(seat),
                                       points: points, senior: senior,
                                       tileHeight: scene.metrics.roomy ? 56 : 44)
                                 .id(announcement.id)
@@ -277,8 +277,8 @@ struct TableDecorations: View {
 
     // MARK: - Цель партии
 
-    /// «СДАЧА 3 · ДО 701» — вертикально у правого края стола. Сплошным второстепенным цветом (≈ 5:1 к сукну;
-    /// с прозрачностью было ≈ 2:1) и кеглем по крупному режиму и iPad. Вписывается в отрезок от отметок
+    /// «СДАЧА 3 · ДО 701» — вертикально у правого края стола. Сплошным второстепенным цветом (≈ 5:1 к сукну —
+    /// полупрозрачный текст пожилым не прочесть) и кеглем по крупному режиму и iPad. Вписывается в отрезок от отметок
     /// соперников (втроём правый соперник говорит у самого края — ниже его реплик) до низа центра:
     /// не помещается — только «до 701», совсем тесно — не показывается. Висячие очки и пересдачи —
     /// горизонтально под козырем (`PotChip`), их важно прочесть сразу. Рисуется первой — под всем остальным.
@@ -325,10 +325,14 @@ struct TableDecorations: View {
     private var heroCaption: some View {
         if scene.heroPhase, let center = frames[.center], let text = heroText {
             let w = HeroGeometry.cardWidth(center: center, handCardWidth: scene.metrics.handCardWidth)
-            let rect = CGRect(x: center.minX + 12, y: HeroGeometry.captionTop(center, cardWidth: w),
-                              width: max(40, center.width - 24), height: HeroGeometry.captionSpace - 6)
+            let top = HeroGeometry.captionTop(center, cardWidth: w)
+            // Высота — до низа центра, а не ровно под две строки мелкого текста: при крупном тексте
+            // двухстрочная подпись 2-го круга иначе обрезалась бы.
+            let rect = CGRect(x: center.minX + 12, y: top, width: max(40, center.width - 24),
+                              height: max(HeroGeometry.captionSpace - 6, center.maxY - 4 - top))
             place(rect, .top) {
                 Text(TableText.styled(text, onLight: false, fourColor: appearance.fourColor))
+                    .accessibilityLabel(Narrator.spoken(text))
                     .font(Theme.Typography.label)
                     .foregroundStyle(Theme.tableText)
                     .multilineTextAlignment(.center)
@@ -361,7 +365,15 @@ struct TableDecorations: View {
     @ViewBuilder
     private var bannerLayer: some View {
         if let center = frames[.center] {
-            let rect = CGRect(x: center.minX + 12, y: center.minY, width: max(1, center.width - 24),
+            // Втроём колода лежит внизу слева центра — сообщение ставим правее неё, чтобы не закрывать
+            // открытую и нижнюю карту (если место есть; иначе — во всю ширину).
+            let left: CGFloat = {
+                guard scene.playerCount == 3, let deck = frames[.deck] else { return center.minX + 12 }
+                let edge = DeckGeometry.footprint(deck, cardWidth: scene.metrics.deckCardWidth)
+                    .reduce(deck.minX) { max($0, $1.maxX) } + 8
+                return center.maxX - edge >= 220 ? edge : center.minX + 12
+            }()
+            let rect = CGRect(x: left, y: center.minY, width: max(1, center.maxX - 12 - left),
                               height: max(1, center.height - 6))
             place(rect, .bottom) {
                 ZStack {

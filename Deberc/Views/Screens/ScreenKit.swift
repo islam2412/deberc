@@ -534,6 +534,9 @@ enum AppInfo {
     static let isTestBuild: Bool = {
         #if DEBUG
         return true
+        #elseif targetEnvironment(simulator)
+        // Скриншоты для App Store снимаются на симуляторе с Release-сборкой — там ссылки быть не должно.
+        return false
         #else
         return Bundle.main.appStoreReceiptURL?.lastPathComponent == "sandboxReceipt"
         #endif

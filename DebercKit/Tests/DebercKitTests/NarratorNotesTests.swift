@@ -223,8 +223,8 @@ final class NarratorNotesTests: XCTestCase {
         try match.apply(.play(c("10ч")))       // Саша заходит с козыря
         let deal = try XCTUnwrap(match.deal)
         XCTAssertEqual(deal.turn, 0)
-        XCTAssertEqual(Narrator.illegalCardReason(deal: deal, seat: 0, card: c("7ч")), "Нужно перебить: козырь старше 10♥")
-        XCTAssertEqual(Narrator.illegalCardReason(deal: deal, seat: 0, card: c("Тп")), "Зашли с козыря — нужно ходить козырем ♥")
+        XCTAssertEqual(Narrator.illegalCardReason(deal: deal, seat: 0, card: c("7ч")), "Нужно перебить: козырь старше, чем 10♥")
+        XCTAssertEqual(Narrator.illegalCardReason(deal: deal, seat: 0, card: c("Тп")), "Зашли с козыря — ходите козырем: ♥")
         XCTAssertEqual(Narrator.illegalCardReason(deal: deal, seat: 0, card: c("Тч")), "")
         XCTAssertEqual(Narrator.illegalCardReason(deal: deal, seat: 1, card: c("8ч")), "Сейчас не ваш ход")
     }
@@ -235,12 +235,12 @@ final class NarratorNotesTests: XCTestCase {
         try match.apply(.exchangeSeven(false))
         try match.apply(.play(c("Тб")))
         let deal = try XCTUnwrap(match.deal)
-        XCTAssertEqual(Narrator.illegalCardReason(deal: deal, seat: 0, card: c("Тп")), "Масти ♦ нет — нужно бить козырем ♥")
+        XCTAssertEqual(Narrator.illegalCardReason(deal: deal, seat: 0, card: c("Тп")), "Бубен нет — бейте козырем: ♥")
         XCTAssertEqual(Narrator.illegalCardReason(deal: deal, seat: 0, card: c("7ч")), "")
         try match.apply(.play(c("7ч")))        // вы берёте козырем
         try match.apply(.play(c("7т")))        // и заходите с треф
         let follow = try XCTUnwrap(match.deal)
         XCTAssertEqual(follow.turn, 1)
-        XCTAssertEqual(Narrator.illegalCardReason(deal: follow, seat: 1, card: c("Кб")), "Нужно ходить в масть ♣")
+        XCTAssertEqual(Narrator.illegalCardReason(deal: follow, seat: 1, card: c("Кб")), "Нужно ходить в масть: ♣")
     }
 }

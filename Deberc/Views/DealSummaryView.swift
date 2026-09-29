@@ -144,7 +144,8 @@ struct DealSummaryView: View {
                     .overlay(Color.white.opacity(0.15))
                 disclosure("Взятки по порядку", systemImage: "list.number", isOpen: $showTricks)
                 if showTricks {
-                    TricksReplayView(deal: deal, seats: seats, tileHeight: isLarge ? 40 : 32)
+                    TricksReplayView(deal: deal, seats: seats,
+                                     tileHeight: isLarge ? 40 : (store.settings.largeCards ? 38 : 32))
                         .padding(.bottom, 6)
                         .transition(.opacity)
                 }

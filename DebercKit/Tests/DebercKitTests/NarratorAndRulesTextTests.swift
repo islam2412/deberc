@@ -65,13 +65,15 @@ final class NarratorAndRulesTextTests: XCTestCase {
 
     func testSpokenFreeText() {
         XCTAssertEqual(Narrator.spoken("Заход: Саша, Т\u{2665}\u{FE0E}"), "Заход: Саша, туз червей")
-        XCTAssertEqual(Narrator.spoken("Нужно перебить: козырь старше 10♥"), "Нужно перебить: козырь старше десятка червей")
-        XCTAssertEqual(Narrator.spoken("Масти ♦ нет — нужно бить козырем ♥"), "Масти бубны нет — нужно бить козырем черви")
+        XCTAssertEqual(Narrator.spoken("Нужно перебить: козырь старше, чем 10♥"),
+                       "Нужно перебить: козырь старше, чем десятка червей")
+        XCTAssertEqual(Narrator.spoken("Бубен нет — бейте козырем: ♥"), "Бубен нет — бейте козырем: черви")
+        XCTAssertEqual(Narrator.spoken("Сдача 3 · играет Саша"), "Сдача 3, играет Саша")
         XCTAssertEqual(Narrator.spoken("Рискну: ♠"), "Рискну: пики")
         XCTAssertEqual(Narrator.spoken("Беру ♦!"), "Беру бубны!")
         XCTAssertEqual(Narrator.spoken("Вы: терц 7-8-9♠, бэла"), "Вы: терц от семёрки до девятки пик, бэла")
         // Без значков масти текст не меняется: ни числа, ни буквы достоинств в словах.
-        let plain = "Сдача 10 · Дама, Туз и 110 очков, В меню"
+        let plain = "Сдача 10, Дама, Туз и 110 очков, В меню"
         XCTAssertEqual(Narrator.spoken(plain), plain)
     }
 

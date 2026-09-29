@@ -254,7 +254,8 @@ struct ScoreSheetView: View {
             return parts.joined(separator: ", ")
         }
         if score.wasPlayed, let bidder = score.bidder, let trump = score.trump {
-            parts.append("играет \(seats.column(bidder)), козырь \(trump.name)")
+            parts.append(bidder == seats.humanSeat ? "играете вы, козырь \(trump.name)"
+                                                   : "играет \(seats.speaker(bidder)), козырь \(trump.name)")
         }
         switch score.outcome {
         case .bait: parts.append("байт")

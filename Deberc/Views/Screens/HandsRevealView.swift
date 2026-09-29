@@ -106,9 +106,18 @@ struct TricksReplayView: View {
     var tileHeight: CGFloat = 32
 
     var body: some View {
+        // Раскладка строк выбирается один раз для всего списка: иначе в узком окне одна широкая строка
+        // (последняя, с припиской про 10 очков) уходит в столбик, а остальные — нет, и очки не в ряд.
+        ViewThatFits(in: .horizontal) {
+            list(stacked: false)
+            list(stacked: true)
+        }
+    }
+
+    private func list(stacked: Bool) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             ForEach(Array(deal.tricks.enumerated()), id: \.offset) { index, trick in
-                row(trick, number: index + 1)
+                row(trick, number: index + 1, stacked: stacked)
             }
         }
     }
@@ -128,21 +137,25 @@ struct TricksReplayView: View {
         return "\(verb) \(seats.speaker(seat))"
     }
 
-    /// Строка взятки; не помещается в ширину (втроём на узком экране) — итог уходит под карты.
-    private func row(_ trick: Trick, number: Int) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 10) {
-                numberLabel(number)
-                plays(trick)
-                Spacer(minLength: 4)
-                result(trick, number: number, alignment: .trailing)
-            }
-            VStack(alignment: .leading, spacing: 6) {
+    /// Строка взятки; `stacked` — итог под картами (втроём на узком экране).
+    @ViewBuilder
+    private func row(_ trick: Trick, number: Int, stacked: Bool) -> some View {
+        Group {
+            if stacked {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .center, spacing: 10) {
+                        numberLabel(number)
+                        plays(trick)
+                    }
+                    result(trick, number: number, alignment: .leading)
+                }
+            } else {
                 HStack(alignment: .center, spacing: 10) {
                     numberLabel(number)
                     plays(trick)
+                    Spacer(minLength: 4)
+                    result(trick, number: number, alignment: .trailing)
                 }
-                result(trick, number: number, alignment: .leading)
             }
         }
         .accessibilityElement(children: .ignore)
@@ -189,7 +202,7 @@ struct TricksReplayView: View {
                     .foregroundStyle(Theme.tableSecondaryText)
             }
             if isLast(number) {
-                Text("+10 за последнюю")
+                Text("в т. ч. 10 за последнюю")
                     .font(.caption)
                     .foregroundStyle(Theme.tableSecondaryText)
             }

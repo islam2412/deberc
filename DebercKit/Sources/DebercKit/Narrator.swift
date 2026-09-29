@@ -334,15 +334,18 @@ public enum Narrator {
         switch PlayRules.violation(of: card, hand: hand, trick: trick, trump: trump, rules: deal.rules) {
         case nil:
             return ""
+        // Значок масти стоит после двоеточия, без падежа: так фраза грамотна и на экране, и вслух
+        // («нужно ходить в масть: бубны»), а не «в масть бубны».
         case .mustFollowSuit(let suit):
             return suit == trump
-                ? "Зашли с козыря — нужно ходить козырем \(suit.symbol)"
-                : "Нужно ходить в масть \(suit.symbol)"
+                ? "Зашли с козыря — ходите козырем: \(suit.symbol)"
+                : "Нужно ходить в масть: \(suit.symbol)"
         case .mustTrump(let t):
             let led = trick.first?.suit
-            return led.map { "Масти \($0.symbol) нет — нужно бить козырем \(t.symbol)" } ?? "Нужно бить козырем \(t.symbol)"
+            return led.map { "\(suitGenitive($0).capitalizedFirst) нет — бейте козырем: \(t.symbol)" }
+                ?? "Нужно бить козырем: \(t.symbol)"
         case .mustOvertrump(let over):
-            return "Нужно перебить: козырь старше \(over)"
+            return "Нужно перебить: козырь старше, чем \(over)"
         }
     }
 
@@ -409,7 +412,8 @@ public enum Narrator {
     /// «козырь ♥ черви» → «козырь черви» (название уже рядом — значок просто пропадает),
     /// «Беру ♦» → «Беру бубны». Остальной текст не меняется.
     public static func spoken(_ text: String) -> String {
-        let chars = Array(text)
+        // «·» между частями VoiceOver читает как «точка» посреди фразы.
+        let chars = Array(text.replacingOccurrences(of: " · ", with: ", "))
         var result = ""
         var i = 0
         while i < chars.count {
@@ -466,4 +470,9 @@ public enum Narrator {
         guard let scalar = character.unicodeScalars.first else { return nil }
         return Suit.allCases.first { $0.symbol.unicodeScalars.first == scalar }
     }
+}
+
+extension String {
+    /// Первая буква заглавная: «бубен» → «Бубен».
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
 }

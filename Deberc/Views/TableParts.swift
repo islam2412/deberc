@@ -43,16 +43,19 @@ struct SeatInfo {
         return min(1, max(0, Double(score) / Double(target)))
     }
 
-    /// Счётчики до штрафа: «байт 2/3 · голый 1/3» — сколько уже есть из скольких до штрафа.
-    var marksText: String? { marks(short: false) }
+    /// Счётчики до штрафа словами: «байт: 2 из 3 · голый: 1 из 3» — сколько уже есть из скольких до штрафа.
+    var marksText: String? { marks(compact: false) }
 
-    /// То же коротко для тесного места: «Б 2/3 · Г 1/3».
-    var marksShort: String? { marks(short: true) }
+    /// Покороче для тесного места — те же слова, без «из»: «байт 2/3 · голый 1/3».
+    var marksShort: String? { marks(compact: true) }
 
-    private func marks(short: Bool) -> String? {
+    private func marks(compact: Bool) -> String? {
         var parts: [String] = []
-        if baitMarks > 0 { parts.append("\(short ? "Б" : "байт") \(baitMarks)/\(rules.baitPenaltyEvery)") }
-        if nakedMarks > 0 { parts.append("\(short ? "Г" : "голый") \(nakedMarks)/\(rules.nakedPenaltyEvery)") }
+        func mark(_ word: String, _ count: Int, _ every: Int) -> String {
+            compact ? "\(word) \(count)/\(every)" : "\(word): \(count) из \(every)"
+        }
+        if baitMarks > 0 { parts.append(mark("байт", baitMarks, rules.baitPenaltyEvery)) }
+        if nakedMarks > 0 { parts.append(mark("голый", nakedMarks, rules.nakedPenaltyEvery)) }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
@@ -70,7 +73,7 @@ struct SeatInfo {
         if tricks > 0 { parts.append("взяток \(tricks)") }
         if baitMarks > 0 { parts.append("байтов: \(baitMarks) из \(rules.baitPenaltyEvery)") }
         if nakedMarks > 0 { parts.append("голых: \(nakedMarks) из \(rules.nakedPenaltyEvery)") }
-        if let bubble { parts.append("говорит: \(bubble)") }
+        if let bubble { parts.append("говорит: \(Narrator.spoken(bubble))") }
         for item in declarations {
             parts.append(DeclarationChip.spoken(item, rules: rules))
         }
@@ -297,7 +300,8 @@ struct SeatPlate: View {
     }
 }
 
-/// Счётчики байтов и голых до штрафа: словами, а в тесноте — буквами.
+/// Счётчики байтов и голых до штрафа: словами, в тесноте — короче, а совсем тесно — не показываются
+/// (они есть в записи партии и в VoiceOver).
 struct MarksLabel: View {
     let info: SeatInfo
 
@@ -306,6 +310,7 @@ struct MarksLabel: View {
             ViewThatFits(in: .horizontal) {
                 text(long)
                 text(short)
+                Color.clear.frame(width: 0, height: 0)
             }
         }
     }
@@ -551,7 +556,7 @@ struct TrumpStamp: View {
 struct MeldStamp: View {
     let melds: [Meld]
     let rules: RuleSet
-    /// «у вас», «у Бориса».
+    /// «Вы», «Борис» — чьи комбинации.
     let owner: String
     let points: Int
     /// У других тоже были комбинации, но младше.

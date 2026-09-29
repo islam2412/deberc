@@ -268,11 +268,14 @@ struct ActionPanel: View {
                 .foregroundStyle(titleColor)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+                .accessibilityHidden(title == nil)
             Text(suited(subtitle ?? " "))
                 .font(Theme.Typography.caption)
                 .foregroundStyle(Theme.tableSecondaryText)
                 .lineLimit(2, reservesSpace: true)
                 .minimumScaleFactor(0.8)
+                .accessibilityLabel(Narrator.spoken(subtitle ?? ""))
+                .accessibilityHidden(subtitle == nil)
         }
         .contentTransition(.identity)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -360,8 +363,9 @@ struct ActionPanel: View {
 
     private var waitingTitle: String? {
         let human = store.humanSeat
-        if let trick = store.displayedTrick, let winner = trick.winner {
-            return winner == human ? "Ваша взятка" : "Взятку берёт \(store.displayName(for: winner))"
+        // Кто взял — написано золотом на самой карте (с «+10» за последнюю); здесь — что делать.
+        if store.displayedTrick != nil {
+            return "Коснитесь стола, чтобы собрать"
         }
         guard let actor = deal.actor, actor != human else { return nil }
         let name = store.displayName(for: actor)
@@ -369,8 +373,8 @@ struct ActionPanel: View {
     }
 
     private var waitingSubtitle: String? {
-        if store.displayedTrick != nil {
-            return "Коснитесь стола, чтобы собрать"
+        if let winner = store.displayedTrick?.winner {
+            return winner == store.humanSeat ? "Взятка ваша" : "Взятку берёт \(store.displayName(for: winner))"
         }
         switch deal.phase {
         case .bidding, .exchange:
@@ -390,6 +394,7 @@ struct ActionPanel: View {
 
     private func prompt(_ text: String) -> some View {
         Text(suited(text))
+            .accessibilityLabel(Narrator.spoken(text))
             .font(Theme.Typography.caption)
             .foregroundStyle(store.bidHint != nil ? Theme.gold : Theme.tableSecondaryText)
             .multilineTextAlignment(.center)

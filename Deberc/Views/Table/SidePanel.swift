@@ -91,11 +91,11 @@ struct SidePanel: View {
         var parts: [String] = []
         let bait = match.rules.baitPenaltyEvery
         if bait > 1, match.baitCounts.indices.contains(seat), match.baitCounts[seat] % bait > 0 {
-            parts.append("байтов \(match.baitCounts[seat] % bait) из \(bait)")
+            parts.append("байт: \(match.baitCounts[seat] % bait) из \(bait)")
         }
         let naked = match.rules.nakedPenaltyEvery
         if naked > 1, match.nakedCounts.indices.contains(seat), match.nakedCounts[seat] % naked > 0 {
-            parts.append("голый \(match.nakedCounts[seat] % naked) из \(naked)")
+            parts.append("голый: \(match.nakedCounts[seat] % naked) из \(naked)")
         }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -224,7 +224,7 @@ struct PersonaPanel: View {
                 .accessibilityAddTraits(.isHeader)
             HStack(spacing: 8) {
                 LevelStarsView(level: persona.level, size: 13)
-                Text("\(persona.level.title) · \(persona.style.title)")
+                Text("\(persona.level.title) · \(persona.style.title(feminine: persona.feminine))")
                     .font(Theme.Typography.label)
                     .foregroundStyle(Theme.tableSecondaryText)
             }
@@ -249,7 +249,7 @@ struct PersonaPanel: View {
         let with = persona.feminine ? "с ней" : "с ним"
         guard let record, record.played > 0 else { return "Вы ещё не доигрывали партию \(with)" }
         let games = RuPlural.count(record.played, "партия", "партии", "партий")
-        return "Ваши партии \(with): \(games), побед — \(record.won)"
+        return "Сыграно \(with): \(games), ваших побед — \(record.won)"
     }
 }
 
@@ -270,7 +270,7 @@ struct LastTrickPanel: View {
 
     /// Ширина карты — по свободному месту: окно минус поля, промежутки и запас колонки (8 pt) на каждую карту.
     /// Втроём: 393 pt — (393 − 24 − 44 − 24) / 3 − 8 = 92; 375 — 86; 320 — 68; 430 (поля 24) — 96;
-    /// вдвоём и на iPad — до 110. Раньше колонки были по 118 pt и втроём карточка выходила за края экрана.
+    /// вдвоём и на iPad — до 110. С постоянной шириной колонок втроём карточка выходила бы за края экрана.
     private var cardWidth: CGFloat {
         let n = CGFloat(max(1, trick.plays.count))
         let room = screenWidth - 2 * outerPadding - 2 * innerPadding - (n - 1) * columnSpacing
@@ -294,7 +294,7 @@ struct LastTrickPanel: View {
                     }
                 }
                 if let winner = trick.winner {
-                    Text("Взятка: \(name(winner))")
+                    Text(name(winner) == "Вы" ? "Взятка ваша" : "Взятку берёт \(name(winner))")
                         .font(Theme.Typography.label)
                         .foregroundStyle(Theme.gold)
                 }
@@ -324,11 +324,13 @@ struct LastTrickPanel: View {
                 Text("заход")
                     .font(Theme.Typography.caption)
                     .foregroundStyle(Theme.tableSecondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
         }
         .frame(width: cardWidth + 8)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name(play.seat)): \(CardView.spokenName(play.card))" + (index == 0 ? ", заход" : ""))
+        .accessibilityLabel("\(name(play.seat)): \(Narrator.spokenCard(play.card))" + (index == 0 ? ", заход" : ""))
     }
 }
 

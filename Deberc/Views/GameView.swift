@@ -100,6 +100,10 @@ struct GameView: View {
         // Размер текста стола — с потолком (стол не разъезжается), а окна поверх него (итоги, последняя
         // взятка, карточка соперника, меню) — как листы, до AX3: они прокручиваются или просторны.
         let tableType = TableMetrics.typeSize(system: systemTypeSize, size: size, large: large)
+        // Окна поверх стола (итоги, последняя взятка, карточка соперника, меню) — не мельче стола
+        // (с надбавкой крупного режима), но им можно расти до AX3: места у них больше.
+        // Нижняя граница не выше верхней: при системном тексте крупнее AX3 диапазон иначе был бы пустым.
+        let overlayType = min(max(tableType, systemTypeSize), .accessibility3)
         let metrics = TableMetrics(size: size, playerCount: players, large: large, safeTop: safeTop,
                                    bottomInset: bottomInset, typeSize: tableType)
         // Окно итогов — под полосой меню: длинные итоги (втроём, с раскрытыми картами) не уходят под ≡.
@@ -120,7 +124,7 @@ struct GameView: View {
                     .zIndex(3)
                 DealSummaryView(match: match, maxHeight: size.height - summaryTop - 40,
                                 maxWidth: min(metrics.roomy ? 640 : 560, size.width))
-                    .adaptiveTextSize(.sheet)
+                    .dynamicTypeSize(overlayType ... .accessibility3)
                     .frame(width: size.width, height: max(1, size.height - summaryTop))
                     .padding(.top, summaryTop)
                     .transition(reduceMotion ? .opacity : .scale(scale: 0.92).combined(with: .opacity))
@@ -133,20 +137,20 @@ struct GameView: View {
             if showLastTrick, let trick = store.lastTrick {
                 LastTrickPanel(trick: trick, names: displayNames, maxCardWidth: min(110, metrics.handCardWidth),
                                screenWidth: size.width, onClose: { showLastTrick = false })
-                    .adaptiveTextSize(.sheet)
+                    .dynamicTypeSize(overlayType ... .accessibility3)
                     .transition(.opacity)
                     .zIndex(6)
             }
             if let seat = personaSeat, let persona = store.persona(for: seat) {
                 PersonaPanel(persona: persona, record: store.stats.byPersona[persona.id],
                              onClose: { personaSeat = nil })
-                    .adaptiveTextSize(.sheet)
+                    .dynamicTypeSize(overlayType ... .accessibility3)
                     .transition(.opacity)
                     .zIndex(7)
             }
             if showTableMenu {
                 TableMenuPanel(commands: commands, onClose: { showTableMenu = false })
-                    .adaptiveTextSize(.sheet)
+                    .dynamicTypeSize(overlayType ... .accessibility3)
                     .transition(.opacity)
                     .zIndex(8)
             }
@@ -328,9 +332,9 @@ struct TableScreen: View {
             let who = seat == store.humanSeat ? "играете вы" : "играет \(store.displayName(for: seat))"
             return (forced ? "Обязы, козырь " : "Козырь ") + suit.name + ", " + who
         case .melds(let seat, let melds, let points, _):
-            let owner = seat == store.humanSeat ? "у вас" : "у \(store.displayName(for: seat))"
+            let owner = seat == store.humanSeat ? "Вы" : store.displayName(for: seat)
             let names = melds.map { $0.name(match.rules) }.joined(separator: " и ")
-            return "\(names) \(owner), плюс \(points)"
+            return "\(owner): \(names), плюс \(points)"
         }
     }
 

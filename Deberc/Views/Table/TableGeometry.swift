@@ -643,12 +643,7 @@ enum TableText {
 
     /// Масть в родительном падеже: «кроме пик», «кроме червей».
     static func suitGenitive(_ suit: Suit) -> String {
-        switch suit {
-        case .spades: return "пик"
-        case .clubs: return "треф"
-        case .diamonds: return "бубен"
-        case .hearts: return "червей"
-        }
+        Narrator.suitGenitive(suit)
     }
 
     /// Текст с мастями своего цвета (масти — всегда текстом, не эмодзи).

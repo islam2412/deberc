@@ -325,8 +325,9 @@ final class GameStore: ObservableObject {
     func perform(_ action: Action, byUser: Bool = true) {
         guard isHumanTurn, var current = match else { return }
         // Второе касание двойного тапа попадает в новую кнопку на том же месте («Беру» → «Взять … за 7»)
-        // или в карту после сбора взятки — такой «ход» отбрасываем.
-        guard !byUser || !isRepeatTap else { return }
+        // или в карту после сбора взятки — такой «ход» отбрасываем. Пока открыта панель или лист —
+        // тоже: ход делают за столом, а не сквозь меню.
+        guard !byUser || (!isRepeatTap && !isOverlayPresented) else { return }
         let before = current
         let rngBefore = rng
         // Вынужденный ход (одна допустимая карта) — не решение: его не отменяют.
@@ -907,10 +908,19 @@ final class GameStore: ObservableObject {
     private func showPlayTipIfNeeded() {
         guard !autoplay, !settings.hasSeenPlayTip, isHumanTurn, match?.deal?.phase == .playing,
               currentBannerItem?.playTip != true, !bannerQueue.hasPlayTip else { return }
+        // Пока в центре «печать» козыря или комбинаций — подождать: две крупные надписи сразу не читают.
+        let busy = announcementsBusyUntil - .now
+        if busy > .zero {
+            Task { [weak self] in
+                guard let self, await self.visibleSleep(busy) else { return }
+                self.showPlayTipIfNeeded()
+            }
+            return
+        }
         // Показанной подсказка считается, только когда провисит целиком (её могла перебить ошибка хода).
         showBanner(settings.confirmCardTap
-                   ? "Чтобы сходить, коснитесь карты дважды или бросьте её пальцем вверх, к центру стола"
-                   : "Чтобы сходить, коснитесь карты или бросьте её пальцем вверх, к центру стола",
+                   ? "Коснитесь карты — она поднимется, коснитесь ещё раз — сходите. Или бросьте её пальцем вверх"
+                   : "Коснитесь карты, чтобы сходить, или бросьте её пальцем вверх",
                    urgent: true, long: true, playTip: true)
     }
 
@@ -1050,7 +1060,7 @@ final class GameStore: ObservableObject {
                 if !bubbles.isEmpty { bubbles = [:] }
                 sounds.play(.card)
                 if played.seat != humanSeat {
-                    speakForVoiceOver("\(displayName(for: played.seat)): \(CardView.spokenName(played.card))")
+                    speakForVoiceOver("\(displayName(for: played.seat)): \(Narrator.spokenCard(played.card))")
                 }
             case .bella(let seat):
                 urgent = true
@@ -1210,7 +1220,7 @@ final class GameStore: ObservableObject {
     /// Проговорить VoiceOver — в очередь, не обрывая то, что уже говорится.
     private func speakForVoiceOver(_ text: String) {
         guard UIAccessibility.isVoiceOverRunning else { return }
-        let spoken = NSAttributedString(string: SpokenText.from(text),
+        let spoken = NSAttributedString(string: Narrator.spoken(text),
                                         attributes: [.accessibilitySpeechQueueAnnouncement: true])
         UIAccessibility.post(notification: .announcement, argument: spoken)
     }

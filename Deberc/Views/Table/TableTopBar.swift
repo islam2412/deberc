@@ -112,8 +112,9 @@ struct TableTopBar: View {
         }
     }
 
-    /// Пересдачи подряд до обязов (в сдаче на обязах — уже не считаются).
-    private var redeals: Int { deal.forced ? 0 : match.allPassStreak }
+    /// Пересдачи подряд до обязов — пока идёт торговля: когда козырь взят (или сдача на обязах),
+    /// обязов из этой серии уже не будет.
+    private var redeals: Int { deal.forced || deal.trump != nil ? 0 : match.allPassStreak }
 
     private func trumpBadge(detail: String?, compact: Bool = false) -> some View {
         let round: Int?
@@ -166,12 +167,13 @@ struct OpponentCluster: View {
             SeatPlate(info: info, avatarSize: metrics.avatarSize, maxWidth: metrics.roomy ? 320 : 230,
                       onTap: { commands.showPersona(info.seat) })
                 .tableSlot(.seat(info.seat))
-            // Веер — ровно под плашкой, стопка взяток — справа от него (в ширину полосы не входит).
+            // Веер — ровно под плашкой, стопка взяток — слева от него (в ширину полосы не входит):
+            // слева под кнопкой меню пусто, а справа под козырем стоят висячие очки и пересдачи.
             FanSlot(seat: info.seat, metrics: metrics)
-                .overlay(alignment: .trailing) {
+                .overlay(alignment: .leading) {
                     PileSlot(seat: info.seat, owner: info.name, tricks: info.tricks, metrics: metrics,
                              enabled: canShowLastTrick, onTap: commands.showLastTrick)
-                        .offset(x: metrics.pileSlotSize.width + 8)
+                        .offset(x: -(metrics.pileSlotSize.width + 8))
                 }
         }
     }
