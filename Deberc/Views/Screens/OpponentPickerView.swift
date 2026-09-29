@@ -24,20 +24,28 @@ struct OpponentPickerView: View {
     }
 
     var body: some View {
-        SheetContainer(title: title) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("Уровень показывает, насколько сильно играет соперник, манера — как он торгуется. Выбор действует с новой партии.")
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.tableSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    ForEach(BotLevel.allCases, id: \.self) { level in
-                        levelSection(level)
+        SheetContainer(title: title, sizing: .page) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        Text("Уровень показывает, насколько сильно играет соперник, манера — как он торгуется. Выбор действует с новой партии.")
+                            .font(.subheadline)
+                            .foregroundStyle(Theme.tableSecondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(BotLevel.allCases, id: \.self) { level in
+                            levelSection(level)
+                        }
                     }
+                    .padding(16)
+                    .frame(maxWidth: 640)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(16)
-                .frame(maxWidth: 640)
-                .frame(maxWidth: .infinity)
+                // Выбран соперник посильнее — список сразу на нём, а не на «Новичках» в начале.
+                .task {
+                    guard let currentID, let current = Persona.byID(currentID),
+                          current.level != .novice else { return }
+                    proxy.scrollTo(currentID, anchor: .center)
+                }
             }
         }
     }
@@ -75,6 +83,7 @@ struct OpponentPickerView: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
+        .id(persona.id)
     }
 
     private func choose(_ persona: Persona) {

@@ -116,7 +116,7 @@ private struct CardPointsCard: View {
                 .accessibilityAddTraits(.isHeader)
             ranksRow(title: "Козыри — от старшей", suit: .hearts, order: trumpOrder, trump: true)
             ranksRow(title: "Остальные масти", suit: .spades, order: plainOrder, trump: false)
-            Text("За последнюю взятку — ещё 10. Терц — \(rules.terzPoints), полтинник — \(rules.fiftyPoints), бэла — \(rules.bellaPoints).")
+            Text(pointsLine)
                 .font(.subheadline)
                 .foregroundStyle(Theme.tableSecondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -126,12 +126,22 @@ private struct CardPointsCard: View {
         .tableSurface(cornerRadius: 18)
     }
 
+    /// «За последнюю взятку — ещё 10. Терц — 20, полтинник — 50, бэла — 20.» (и сотня, если она в правилах).
+    private var pointsLine: String {
+        let hundred = rules.hundredForFive ? ", сотня (5 подряд) — 100" : ""
+        return "За последнюю взятку — ещё 10. Терц — \(rules.terzPoints), полтинник — \(rules.fiftyPoints)"
+            + "\(hundred), бэла — \(rules.bellaPoints)."
+    }
+
     private func ranksRow(title: String, suit: Suit, order: [Rank], trump: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Theme.tableText)
+            // На iPad карты крупнее — самая большая ширина, что помещается в строку.
             ViewThatFits(in: .horizontal) {
+                cardsLine(suit: suit, order: order, trump: trump, width: 64)
+                cardsLine(suit: suit, order: order, trump: trump, width: 52)
                 cardsLine(suit: suit, order: order, trump: trump, width: 40)
                 cardsLine(suit: suit, order: order, trump: trump, width: 32)
                 cardsLine(suit: suit, order: order, trump: trump, width: 26)
@@ -148,7 +158,7 @@ private struct CardPointsCard: View {
                 VStack(spacing: 4) {
                     CardView(card: card, width: width, isTrump: trump)
                     Text("\(card.points(trump: trump ? suit : otherSuit(suit)))")
-                        .font(.subheadline.weight(.bold).monospacedDigit())
+                        .font((width >= 52 ? Font.headline : Font.subheadline).weight(.bold).monospacedDigit())
                         .foregroundStyle(Theme.tableText)
                 }
             }
@@ -193,8 +203,8 @@ struct TableIconsLegend: View {
             Item(icon: "hand.draw", text: "Ведите пальцем по руке — карта под пальцем приподнимается, её лучше видно. В свой ход отпустите палец — эта карта останется выбранной."),
             Item(icon: "hand.point.up.left", text: "Подержите палец на карте — она покажется крупно. Хода при этом не будет."),
             Item(icon: "wand.and.stars", text: autoPlayText(settings.autoPlay)),
-            Item(icon: "arrow.uturn.backward", text: "«Отменить» возвращает только что сделанный ход или заявку — пока соперник не ответил. Заявку, после которой раздали прикуп, и вынужденную карту отменить нельзя."),
-            Item(icon: "lightbulb", text: "Подсказка — совет сильного игрока: как торговаться, менять ли семёрку, чем ходить."),
+            Item(icon: "arrow.uturn.backward", text: "«Отменить» возвращает только что сделанный ход или заявку — пока соперник не ответил. Заявку, после которой раздали прикуп, решение об обмене семёрки и вынужденную карту отменить нельзя."),
+            Item(icon: "lightbulb", text: "Совет — как сыграл бы сильный игрок: как торговаться, менять ли семёрку, чем ходить."),
         ]
     }
 
@@ -208,7 +218,10 @@ struct TableIconsLegend: View {
             Item(icon: "person.crop.circle", text: "Коснитесь соперника — его характер, уровень и ваши партии с ним."),
             Item(icon: "bubble.left", text: banterText(store.settings.banter)),
             Item(icon: "rectangle.stack", text: "Колода лежит у левого края стола: из-под неё выглядывает открытая карта, ниже — «низ», нижняя карта колоды (её показывают только для сведения)."),
-            Item(icon: "text.line.last.and.arrowtriangle.forward", text: "Вдоль правого края стола — номер сдачи, до скольких очков идёт партия, сколько очков висит или сколько было пересдач подряд."),
+            Item(icon: "suit.spade.fill", text: "Вверху справа, в золотой рамке — козырь этой сдачи; во время торговли там написан круг. Золотая надпись «висит 81» — столько очков висит, «пересдача 1 из 2» — сколько было пересдач подряд."),
+            Item(icon: "text.line.last.and.arrowtriangle.forward", text: AppInfo.isPad
+                 ? "Вдоль правого края стола — номер сдачи и до скольких очков идёт партия, а на широком экране — в панели справа."
+                 : "Вдоль правого края стола — номер сдачи и до скольких очков идёт партия."),
             Item(icon: "eye", text: "Коснитесь стопки взяток — покажется последняя взятка: что в неё легло."),
             Item(icon: "pause.circle", text: "Висячие очки достанутся тому, кто наберёт больше всех в следующей сдаче."),
             Item(icon: "paintpalette", text: "Рубашку карт, четырёхцветную колоду и крупный режим выбирают в Настройках → Вид."),

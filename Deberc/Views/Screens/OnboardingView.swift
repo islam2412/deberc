@@ -1,32 +1,47 @@
 import SwiftUI
 import DebercKit
 
-/// Приветствие при первом запуске — одна страница: что это за игра, подсказки,
-/// как вас называть и крупный режим. «Играть» — сразу за стол, «Выбрать соперников» — в меню.
+/// Приветствие при первом запуске — одна страница: что это за игра, крупный режим, подсказки
+/// и как вас называть. «Играть» (всегда внизу экрана) — сразу за стол, «Выбрать соперников» — в меню.
 struct OnboardingView: View {
     @EnvironmentObject private var store: GameStore
     @State private var name = ""
     @FocusState private var nameFocused: Bool
 
     var body: some View {
-        GeometryReader { geo in
-            let large = min(geo.size.width, geo.size.height) >= 600
-            ScrollView {
-                VStack(spacing: 22) {
-                    Spacer(minLength: 12)
-                    BrandMark(large: large, compact: true, showsTagline: false)
-                    intro
-                    hints
-                    nameField
-                    largeModeToggle
-                    buttons
-                    Spacer(minLength: 12)
+        GeometryReader { screen in
+            let large = min(screen.size.width, screen.size.height) >= 600
+            let width: CGFloat = large ? 600 : 480
+            // «Играть» не прокручивается — он внизу всегда; страница прокручивается над ним.
+            VStack(spacing: 0) {
+                GeometryReader { geo in
+                    ScrollView {
+                        VStack(spacing: 22) {
+                            Spacer(minLength: 12)
+                            BrandMark(large: large, compact: true, showsTagline: false)
+                            intro
+                            // Крупный режим — сразу под приветствием: кому мелко, увидит его без прокрутки.
+                            largeModeToggle
+                            hints
+                            nameField
+                            Spacer(minLength: 28)
+                        }
+                        .frame(maxWidth: width)
+                        .padding(.horizontal, 20)
+                        .frame(maxWidth: .infinity, minHeight: geo.size.height)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                    .bottomFade()
                 }
-                .frame(maxWidth: large ? 600 : 480)
-                .padding(.horizontal, 20)
-                .frame(maxWidth: .infinity, minHeight: geo.size.height)
+                buttons
+                    .frame(maxWidth: width)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+                    // Кнопкам — вся нужная им высота (крупный шрифт на узком экране — в две-три строки),
+                    // странице — остаток. Без этого VStack делит экран пополам и сжимает кнопки.
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
             }
-            .scrollDismissesKeyboard(.interactively)
         }
         .background(FeltBackground())
         .adaptiveTextSize(.screen)
@@ -41,6 +56,7 @@ struct OnboardingView: View {
             Text("Добро пожаловать!")
                 .font(.title.weight(.bold))
                 .foregroundStyle(Theme.tableText)
+                .multilineTextAlignment(.center)
                 .accessibilityAddTraits(.isHeader)
             Text("Деберц \(RulesText.housePhrase): партия до \(store.settings.rules.targetScore), обязы, байты и штрафы уже настроены.")
                 .font(.body)
@@ -57,11 +73,11 @@ struct OnboardingView: View {
             HintRow(icon: "hand.point.up.left",
                     text: "Подержите палец на карте — она покажется крупно. Хода при этом не будет.")
             HintRow(icon: "line.3.horizontal.circle",
-                    text: "В меню стола — запись партии, правила, подсказка, отмена хода и настройки.")
+                    text: "В меню стола — запись партии, правила, совет, отмена хода и настройки.")
             HintRow(icon: "slider.horizontal.3",
                     text: "Любое правило можно поменять: Настройки → Правила партии.")
             HintRow(icon: "star.fill",
-                    text: "Золотая звёздочка на карте — козырь, золотое свечение — картой можно ходить.")
+                    text: "Золотая звёздочка на карте — козырь, золотое свечение — картой можно ходить. Масть вверху справа — козырь сдачи.")
         }
         .screenPanel()
     }
@@ -131,8 +147,7 @@ struct OnboardingView: View {
             Button {
                 finish(startGame: true)
             } label: {
-                Label(store.canContinue ? "Продолжить партию" : "Играть", systemImage: "play.fill")
-                    .frame(maxWidth: .infinity)
+                buttonLabel(store.canContinue ? "Продолжить партию" : "Играть", systemImage: "play.fill")
             }
             .buttonStyle(TableButtonStyle(prominent: true))
             .accessibilityHint(store.canContinue ? "Вернуться к сохранённой партии" : "Партия вдвоём с соперником-любителем")
@@ -140,11 +155,21 @@ struct OnboardingView: View {
             Button {
                 finish(startGame: false)
             } label: {
-                Label("Выбрать соперников", systemImage: "person.2")
-                    .frame(maxWidth: .infinity)
+                buttonLabel("Выбрать соперников", systemImage: "person.2")
             }
             .buttonStyle(TableButtonStyle())
         }
+    }
+
+    /// Со значком — если надпись помещается в строку. Крупный шрифт на узком экране — без значка:
+    /// так слова переносятся целиком («Продолжить / партию»), а не по слогам, и кнопка ниже.
+    private func buttonLabel(_ title: String, systemImage: String) -> some View {
+        ViewThatFits(in: .horizontal) {
+            Label(title, systemImage: systemImage)
+                .lineLimit(1)
+            Text(title)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     private func finish(startGame: Bool) {

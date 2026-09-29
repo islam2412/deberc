@@ -13,6 +13,8 @@ struct MenuView: View {
     @State private var confirmNewGame = false
     /// Партия идёт — выбор новой партии свёрнут, пока его не попросят.
     @State private var newGameExpanded = false
+    /// Значок плитки «Правила / Статистика / Настройки» растёт вместе со шрифтом.
+    @ScaledMetric(relativeTo: .title2) private var tileIcon: CGFloat = 28
 
     enum MenuSheet: String, Identifiable {
         case rules, settings, stats, firstOpponent, secondOpponent
@@ -29,7 +31,7 @@ struct MenuView: View {
                     if wide {
                         wideLayout(large: large)
                     } else {
-                        tallLayout(large: large, short: short)
+                        tallLayout(large: large, short: short, height: geo.size.height)
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: geo.size.height)
@@ -53,13 +55,22 @@ struct MenuView: View {
 
     // MARK: - Раскладка
 
-    private func tallLayout(large: Bool, short: Bool) -> some View {
-        VStack(spacing: 20) {
-            Spacer(minLength: 16)
-            BrandMark(large: large, compact: short && !large)
-            panels
+    /// На невысоком экране (iPhone SE, «Увеличенный» вид) у заставки нет подзаголовка, а при идущей
+    /// партии — и веера, отступы плотнее: тогда плитки «Правила / Статистика / Настройки» видны
+    /// без прокрутки. На самом низком (SE с «Увеличенным» видом) при идущей партии заставки нет вовсе —
+    /// заголовок там карточка «Партия идёт».
+    private func tallLayout(large: Bool, short: Bool, height: CGFloat) -> some View {
+        let tight = height < 700
+        return VStack(spacing: tight ? 14 : 20) {
+            Spacer(minLength: tight ? 8 : 16)
+            if height >= 600 || !store.canContinue {
+                BrandMark(large: large, compact: short && !large,
+                          showsFan: height >= 740 || !store.canContinue,
+                          showsTagline: height >= 740)
+            }
+            panels(spacing: tight ? 12 : 16)
             footer
-            Spacer(minLength: 16)
+            Spacer(minLength: tight ? 8 : 16)
         }
         .frame(maxWidth: large ? 620 : 480)
         .padding(.horizontal, 20)
@@ -74,7 +85,7 @@ struct MenuView: View {
             .frame(maxWidth: 420)
             VStack(spacing: 20) {
                 Spacer(minLength: 16)
-                panels
+                panels(spacing: 16)
                 Spacer(minLength: 16)
             }
             .frame(maxWidth: 560)
@@ -82,8 +93,8 @@ struct MenuView: View {
         .padding(.horizontal, 32)
     }
 
-    private var panels: some View {
-        VStack(spacing: 16) {
+    private func panels(spacing: CGFloat) -> some View {
+        VStack(spacing: spacing) {
             if let problem = store.loadProblem {
                 loadProblemBanner(problem)
             }
@@ -134,10 +145,23 @@ struct MenuView: View {
                     Text("Новая партия…")
                         .font(.headline)
                         .foregroundStyle(Theme.tableText)
-                    Text(newGameSummary)
-                        .font(.subheadline)
-                        .foregroundStyle(Theme.tableSecondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+                    // «Втроём · Нина и Миша» в строку, а если тесно — в две, но без переносов посреди имени.
+                    ViewThatFits(in: .horizontal) {
+                        Text(newGameNames.isEmpty ? newGameCount : "\(newGameCount) · \(newGameNames)")
+                            .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(newGameCount)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                            if !newGameNames.isEmpty {
+                                Text(newGameNames)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.85)
+                            }
+                        }
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.tableSecondaryText)
                 }
                 Spacer(minLength: 6)
                 Image(systemName: "chevron.down")
@@ -154,11 +178,14 @@ struct MenuView: View {
         .accessibilityHint("Выбрать соперников и начать новую партию")
     }
 
-    /// «Вдвоём · Саша» / «Втроём · Нина и Миша».
-    private var newGameSummary: String {
-        let names = store.settings.activeOpponentIDs.compactMap { Persona.byID($0)?.name }
-        let count = store.settings.playerCount == 3 ? "Втроём" : "Вдвоём"
-        return names.isEmpty ? count : "\(count) · \(names.joined(separator: " и "))"
+    /// «Вдвоём» / «Втроём».
+    private var newGameCount: String {
+        store.settings.playerCount == 3 ? "Втроём" : "Вдвоём"
+    }
+
+    /// «Саша» / «Нина и Миша».
+    private var newGameNames: String {
+        store.settings.activeOpponentIDs.compactMap { Persona.byID($0)?.name }.joined(separator: " и ")
     }
 
     private var newGamePanel: some View {
@@ -316,25 +343,55 @@ struct MenuView: View {
 
     // MARK: - Второстепенное
 
+    /// Плитки равной ширины. Подписи у всех одним кеглем: не помещаются словом целиком — все мельче.
     private var secondaryButtons: some View {
-        HStack(spacing: 10) {
-            tile("Правила", icon: "book", sheet: .rules)
-            tile("Статистика", icon: "chart.bar", sheet: .stats)
-            tile("Настройки", icon: "gearshape", sheet: .settings)
+        ViewThatFits(in: .horizontal) {
+            tiles(font: nil)
+            tiles(font: .subheadline.weight(.semibold))
+            // Не влез и запасной кегль («Увеличенный» вид с крупным режимом, крупный системный шрифт) —
+            // все три подписи сжимаются в одно и то же число раз, по самой длинной.
+            tiles(font: .subheadline.weight(.semibold), sameScale: true)
         }
     }
 
-    private func tile(_ title: String, icon: String, sheet target: MenuSheet) -> some View {
+    private static let tileTitles = ["Правила", "Статистика", "Настройки"]
+
+    /// `font` — nil: кегль из стиля плитки.
+    private func tiles(font: Font?, sameScale: Bool = false) -> some View {
+        EqualWidthHStack(spacing: 10) {
+            tile("Правила", icon: "book", sheet: .rules, font: font, sameScale: sameScale)
+            tile("Статистика", icon: "chart.bar", sheet: .stats, font: font, sameScale: sameScale)
+            tile("Настройки", icon: "gearshape", sheet: .settings, font: font, sameScale: sameScale)
+        }
+    }
+
+    private func tile(_ title: String, icon: String, sheet target: MenuSheet, font: Font?, sameScale: Bool) -> some View {
         Button {
             sheet = target
         } label: {
             VStack(spacing: 6) {
                 Image(systemName: icon)
                     .font(.title2)
+                    .frame(height: tileIcon)
                     .accessibilityHidden(true)
-                Text(title)
+                if sameScale {
+                    SameScaleTitle(shown: Self.tileTitles.firstIndex(of: title) ?? 0) {
+                        ForEach(Self.tileTitles, id: \.self) { other in
+                            Text(other)
+                                .opacity(other == title ? 1 : 0)
+                        }
+                    }
+                    .font(font)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.3)
+                } else if let font {
+                    Text(title)
+                        .font(font)
+                        .lineLimit(1)
+                } else {
+                    Text(title)
+                        .lineLimit(1)
+                }
             }
             .frame(maxWidth: .infinity)
         }
@@ -434,9 +491,19 @@ struct ContinueCard: View {
                 }
             }
             Button(action: onContinue) {
-                Label("Продолжить партию", systemImage: "play.fill")
-                    .frame(maxWidth: .infinity)
+                // Всегда в одну строку и целиком: тесно — без значка, ещё теснее — короче,
+                // а при крупном системном шрифте на узком экране — одно слово, чуть мельче.
+                ViewThatFits(in: .horizontal) {
+                    Label("Продолжить партию", systemImage: "play.fill")
+                    Text("Продолжить партию")
+                    Label("Продолжить", systemImage: "play.fill")
+                    Text("Продолжить")
+                        .minimumScaleFactor(0.6)
+                }
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
             }
+            .accessibilityLabel("Продолжить партию")
             .buttonStyle(TableButtonStyle(prominent: true))
         }
         .screenPanel(highlighted: true)
@@ -482,5 +549,41 @@ struct ContinueCard: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(store.displayName(for: seat)): \(Narrator.points(total))")
+    }
+}
+
+/// Подпись плитки в том же масштабе, что и у соседних. Подвиды — все подписи ряда, видна одна
+/// (`shown`, остальные прозрачные): если самая длинная не помещается в плитку, каждая подпись
+/// получает ширину «своя × (место / самая длинная)» и `minimumScaleFactor` сжимает все одинаково.
+private struct SameScaleTitle: Layout {
+    let shown: Int
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.indices.contains(shown) else { return .zero }
+        let widest = widestWidth(subviews)
+        let width = min(proposal.width ?? widest, widest)
+        let own = subviews[shown]
+        let height = own.sizeThatFits(ProposedViewSize(width: scaledWidth(own, widest: widest, room: width),
+                                                       height: nil)).height
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let widest = widestWidth(subviews)
+        for subview in subviews {
+            subview.place(at: CGPoint(x: bounds.midX, y: bounds.midY), anchor: .center,
+                          proposal: ProposedViewSize(width: scaledWidth(subview, widest: widest, room: bounds.width),
+                                                     height: bounds.height))
+        }
+    }
+
+    private func widestWidth(_ subviews: Subviews) -> CGFloat {
+        subviews.map { $0.sizeThatFits(.unspecified).width }.max() ?? 0
+    }
+
+    private func scaledWidth(_ subview: LayoutSubview, widest: CGFloat, room: CGFloat) -> CGFloat {
+        let ideal = subview.sizeThatFits(.unspecified).width
+        guard widest > room, widest > 0 else { return ideal }
+        return ideal * room / widest
     }
 }

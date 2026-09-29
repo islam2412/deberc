@@ -77,7 +77,8 @@ struct ProblemReportLink: View {
             if let url {
                 ShareLink(item: url,
                           subject: Text(subject),
-                          message: Text("Что-то пошло не так — в файле вся партия, её можно воспроизвести.")) {
+                          message: Text("Что-то пошло не так — в файле вся партия, её можно воспроизвести. "
+                                        + "Почта разработчика: \(AppInfo.supportEmail).")) {
                     Label(title, systemImage: systemImage)
                 }
             } else {

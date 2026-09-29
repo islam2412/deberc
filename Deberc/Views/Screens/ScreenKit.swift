@@ -152,6 +152,20 @@ struct SheetBackground: View {
     }
 }
 
+extension View {
+    /// Низ прокручиваемого списка затухает: итоги не обрываются посреди строки, и видно, что дальше
+    /// есть ещё. Снизу у содержимого должен быть отступ не меньше `height` — тогда в самом конце
+    /// прокрутки затухает только пустое место.
+    func bottomFade(_ height: CGFloat = 24) -> some View {
+        mask(
+            VStack(spacing: 0) {
+                Color.black
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: height)
+            })
+    }
+}
+
 /// Оболочка листа: заголовок, кнопка «Готово», фон сукна, золотые акценты, крупный текст на iPad.
 struct SheetContainer<Content: View>: View {
     let title: String
@@ -527,6 +541,12 @@ enum AppInfo {
     static var isPad: Bool {
         UIDevice.current.userInterfaceIdiom == .pad
     }
+
+    /// Почта разработчика для отзывов и сообщений о проблемах (её же видно в App Store).
+    static let supportEmail = "islamytchaev@gmail.com"
+
+    /// Письмо разработчику с темой «Деберц» (в адресе — URL-кодировкой).
+    static let supportURL = URL(string: "mailto:\(supportEmail)?subject=%D0%94%D0%B5%D0%B1%D0%B5%D1%80%D1%86")!
 
     /// Сборка для проверки: из Xcode или из TestFlight (у неё «песочный» чек App Store).
     /// Только в ней «Отправить сдачу» стоит прямо в итогах и в меню — родным, которые проверяют
