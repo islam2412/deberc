@@ -23,6 +23,14 @@ public enum RulesText {
         return (2...4).contains(last) && !(12...14).contains(lastTwo) ? "раза" : "раз"
     }
 
+    /// Кто играет на обязах — для текста правил и настроек.
+    public static func forcedPlayerPhrase(_ player: RuleSet.ForcedPlayer) -> String {
+        switch player {
+        case .afterDealer: return "играет следующий после сдающего (вдвоём — соперник сдающего)"
+        case .dealer: return "сдающий играет сам"
+        }
+    }
+
     public static func sections(for r: RuleSet) -> [Section] {
         var result: [Section] = []
 
@@ -41,11 +49,10 @@ public enum RulesText {
             "Если все спасовали — 2-й круг: можно назвать любую другую масть или сказать «пас».",
             "Если все спасовали и во 2-м круге — пересдача, сдаёт следующий.",
         ]
-        if r.forcedDealAfterRedeals == 1 {
-            deal.append("Обязы: если все спасовали и была пересдача, в следующей сдаче торговли нет — сдающий играет сам, козырь — масть открытой карты.")
-        } else if r.forcedDealAfterRedeals > 1 {
+        if r.forcedDealAfterRedeals > 0 {
             let n = r.forcedDealAfterRedeals
-            deal.append("Обязы: если пересдача была \(n) \(timesWord(n)) подряд, в следующей сдаче торговли нет — сдающий играет сам, козырь — масть открытой карты.")
+            let when = n == 1 ? "если все спасовали и была пересдача" : "если пересдача была \(n) \(timesWord(n)) подряд"
+            deal.append("Обязы: \(when), в следующей сдаче торговли нет — \(forcedPlayerPhrase(r.forcedPlayer)), козырь — масть открытой карты.")
         }
         deal.append("Кто назначил козырь — «играющий», остальные — его соперники.")
         var prikup = "Затем каждому добирают ещё по 3 карты — у всех по 9."
@@ -69,7 +76,7 @@ public enum RulesText {
             deal.append("Четыре семёрки на руках\(when): \(what). Следующую сдачу сдаёт следующий по кругу.")
             if r.forcedDealAfterRedeals > 0 {
                 deal.append(r.fourSevensKeepsForcedStreak
-                    ? "Пересдача из-за четырёх семёрок не меняет счёт пересдач до обязов: если это были обязы, следующая сдача — снова обязы, у нового сдающего."
+                    ? "Пересдача из-за четырёх семёрок не меняет счёт пересдач до обязов: если это были обязы, следующая сдача — снова обязы."
                     : "Пересдача из-за четырёх семёрок начинает счёт пересдач до обязов заново.")
             }
         }

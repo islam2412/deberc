@@ -85,6 +85,12 @@ struct RuleSettingsView: View {
                 Text("После 2 пересдач подряд").tag(2)
                 Text("После 3 пересдач подряд").tag(3)
             }
+            if rules.forcedDealAfterRedeals > 0 {
+                Picker("Кто играет на обязах", selection: $store.settings.rules.forcedPlayer) {
+                    Text("Следующий после сдающего").tag(RuleSet.ForcedPlayer.afterDealer)
+                    Text("Сдающий").tag(RuleSet.ForcedPlayer.dealer)
+                }
+            }
             Picker("Обмен козырной семёрки", selection: $store.settings.rules.sevenExchange) {
                 Text("Любой игрок").tag(RuleSet.SevenExchange.anyPlayer)
                 Text("Только играющий").tag(RuleSet.SevenExchange.bidderOnly)
@@ -106,7 +112,7 @@ struct RuleSettingsView: View {
         } header: {
             Text("Раздача и торговля").formHeaderStyle()
         } footer: {
-            Text("Обязы: после нескольких пересдач подряд торговли нет — сдающий играет сам на масть открытой карты.")
+            Text("Обязы: после нескольких пересдач подряд торговли нет — \(RulesText.forcedPlayerPhrase(rules.forcedPlayer)) на масть открытой карты.")
                 .formHeaderStyle()
         }
         .screenRow()
@@ -126,7 +132,7 @@ struct RuleSettingsView: View {
                 if rules.forcedDealAfterRedeals > 0 {
                     Toggle(isOn: $store.settings.rules.fourSevensKeepsForcedStreak) {
                         SettingLabel(title: "Не сбрасывают счёт до обязов",
-                                     detail: "Если это были обязы, следующая сдача — снова обязы, у нового сдающего")
+                                     detail: "Если это были обязы, следующая сдача — снова обязы")
                     }
                 }
             }

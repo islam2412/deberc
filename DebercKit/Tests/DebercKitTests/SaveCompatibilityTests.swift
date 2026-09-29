@@ -35,6 +35,8 @@ final class SaveCompatibilityTests: XCTestCase {
 
     func testDecodesV1ThreePlayersMidPlay() throws {
         var m = try decode(SaveFixturesV1.threePlayersPlaying)
+        XCTAssertEqual(m.rules, .house, "Домашние правила версии 1 читаются как домашние (новые пункты — по умолчанию)")
+        XCTAssertEqual(m.deal?.rules, .house)
         XCTAssertEqual(m.playerCount, 3)
         XCTAssertEqual(m.names, ["Вы", "Саша", "Миша"])
         XCTAssertEqual(m.totals, [518, 573, 418])
@@ -98,6 +100,7 @@ final class SaveCompatibilityTests: XCTestCase {
         XCTAssertEqual(m.rules.firstLead, .bidder)
         XCTAssertTrue(m.rules.bellaInMelds, "Новые правила — по умолчанию")
         XCTAssertTrue(m.rules.fourSevensKeepsForcedStreak)
+        XCTAssertEqual(m.rules.forcedPlayer, .afterDealer)
         XCTAssertEqual(m.totals, [179, 286])
         XCTAssertEqual(m.allPassStreak, 2)
         let deal = try XCTUnwrap(m.deal)
@@ -105,6 +108,9 @@ final class SaveCompatibilityTests: XCTestCase {
         XCTAssertEqual(deal.trump, .diamonds)
         XCTAssertEqual(deal.bidder, 1)
         XCTAssertTrue(deal.forced)
+        // Сдача на обязах из версии 1 (тогда играл сдающий) доигрывается как была: играющий сохранён.
+        XCTAssertEqual(deal.dealer, 1)
+        XCTAssertEqual(deal.bids, [Bid(seat: 1, round: 1, kind: .forced, suit: .diamonds)])
 
         try continueFirstLegal(&m)
         XCTAssertEqual(m.totals, [189, 555])

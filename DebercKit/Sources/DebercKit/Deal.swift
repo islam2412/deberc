@@ -126,7 +126,8 @@ public struct Deal: Codable, Equatable, Sendable {
     public let rules: RuleSet
     public let playerCount: Int
     public let dealer: Int
-    /// «Обязы»: торговли нет, играет сдающий на масть открытой карты.
+    /// «Обязы»: торговли нет, на масть открытой карты играет тот, кого назначает
+    /// `RuleSet.forcedPlayer` (по умолчанию — следующий после сдающего).
     public let forced: Bool
 
     public private(set) var hands: [[Card]]
@@ -197,10 +198,11 @@ public struct Deal: Codable, Equatable, Sendable {
         }
 
         if forced {
-            let bid = Bid(seat: dealer, round: 1, kind: .forced, suit: deal.openCard.suit)
+            let seat = rules.forcedSeat(dealer: dealer, playerCount: playerCount)
+            let bid = Bid(seat: seat, round: 1, kind: .forced, suit: deal.openCard.suit)
             deal.bids.append(bid)
             events.append(.bid(bid))
-            deal.chooseTrump(deal.openCard.suit, by: dealer, forced: true, events: &events)
+            deal.chooseTrump(deal.openCard.suit, by: seat, forced: true, events: &events)
         }
         return (deal, events)
     }

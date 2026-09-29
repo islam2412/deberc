@@ -180,21 +180,48 @@ final class NarratorNotesTests: XCTestCase {
 
     // MARK: - События
 
+    /// Предупреждение о сдаче на обязах называет того, кто будет играть, а не сдающего:
+    /// вдвоём после двух пересдач сдаёте снова вы, а обязы — у соперника.
     func testAllPassedMessageWarnsAboutForcedDeal() throws {
-        var match = Match(playerCount: 2, names: ["Вы", "Саша"], rules: .house, seed: 3, firstDealer: 0)
-        let deck = { (dealer: Int) in
-            arrangedDeck(dealer: dealer, hands: [cards("Вч 9ч Тп 10п Кп 7т"), cards("7ч 8ч Тб 10б Кб Дт")],
-                         open: c("Кч"), prikup: [cards("Дп Вп 8т"), cards("9т 10т Вт")])
+        for (player, who) in [(RuleSet.ForcedPlayer.afterDealer, "играет Саша"), (.dealer, "играете вы")] {
+            var rules = RuleSet.house
+            rules.forcedPlayer = player
+            var match = Match(playerCount: 2, names: ["Вы", "Саша"], rules: rules, seed: 3, firstDealer: 0)
+            let deck = { (dealer: Int) in
+                arrangedDeck(dealer: dealer, hands: [cards("Вч 9ч Тп 10п Кп 7т"), cards("7ч 8ч Тб 10б Кб Дт")],
+                             open: c("Кч"), prikup: [cards("Дп Вп 8т"), cards("9т 10т Вт")])
+            }
+            match.startDeal(deck: deck(0), dealer: 0)
+            for _ in 0..<4 { try match.apply(.pass) }
+            XCTAssertEqual(Narrator.message(for: .allPassed, in: match, humanSeat: 0), "Все спасовали — пересдача")
+            match.startDeal(deck: deck(1), dealer: 1)
+            for _ in 0..<4 { try match.apply(.pass) }
+            XCTAssertEqual(match.upcomingDealer, 0)
+            XCTAssertEqual(Narrator.message(for: .allPassed, in: match, humanSeat: 0),
+                           "Все спасовали — пересдача. Следующая — на обязах: \(who)")
+            XCTAssertNil(Narrator.message(for: .dealFinished, in: match, humanSeat: 0))
+            // Сообщение не расходится с тем, кто и правда играет.
+            match.startDeal(deck: deck(0), dealer: 0)
+            let bidder = try XCTUnwrap(match.deal?.bidder)
+            XCTAssertEqual(Narrator.bidderPhrase(seat: bidder, names: match.names, humanSeat: 0), who)
         }
-        match.startDeal(deck: deck(0), dealer: 0)
-        for _ in 0..<4 { try match.apply(.pass) }
-        XCTAssertEqual(Narrator.message(for: .allPassed, in: match, humanSeat: 0), "Все спасовали — пересдача")
-        match.startDeal(deck: deck(1), dealer: 1)
-        for _ in 0..<4 { try match.apply(.pass) }
-        XCTAssertEqual(match.upcomingDealer, 0)
+    }
+
+    /// Втроём обязы у сидящего слева от сдающего: сдаёт Миша — играете вы.
+    func testAllPassedMessageNamesForcedPlayerThreePlayers() throws {
+        var match = Match(playerCount: 3, names: ["Вы", "Саша", "Миша"], rules: .house, seed: 3, firstDealer: 0)
+        let deck = { (dealer: Int) in
+            arrangedDeck(dealer: dealer,
+                         hands: [cards("Вч 9ч Тп 10п Кп 7т"), cards("7ч 8ч Тб 10б Кб Дт"), cards("Дч 10ч Тт 7п 8п 9п")],
+                         open: c("Кч"), prikup: [cards("Дп Вп 8т"), cards("9т 10т Вт"), cards("7б 8б 9б")])
+        }
+        for dealer in [0, 1] {
+            match.startDeal(deck: deck(dealer), dealer: dealer)
+            for _ in 0..<6 { try match.apply(.pass) }
+        }
+        XCTAssertEqual(match.upcomingDealer, 2)
         XCTAssertEqual(Narrator.message(for: .allPassed, in: match, humanSeat: 0),
                        "Все спасовали — пересдача. Следующая — на обязах: играете вы")
-        XCTAssertNil(Narrator.message(for: .dealFinished, in: match, humanSeat: 0))
     }
 
     // MARK: - Недопустимый ход
