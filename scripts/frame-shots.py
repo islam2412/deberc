@@ -39,12 +39,14 @@ IVORY = (0xFF, 0xF8, 0xEC)       # tableText
 GOLD = (0xE3, 0xB2, 0x3C)        # goldFill
 GOLD_LIGHT = (0xFF, 0xE0, 0x8A)  # goldLight
 
-# Системный жирный шрифт с кириллицей: SF Pro (переменный) или Arial Bold.
+# Системный жирный шрифт с кириллицей: SF Pro (переменный) или Arial Bold; на Linux (CI) — DejaVu
+# или Liberation.
 FONTS = [
     "/System/Library/Fonts/SFNS.ttf",
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
     "/Library/Fonts/Arial Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
 ]
 
 # Доли высоты холста.

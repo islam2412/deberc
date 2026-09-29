@@ -112,6 +112,9 @@ private struct DemoLandscape<Content: View>: View {
                 .frame(width: emulated ? long : geo.size.width, height: emulated ? short : geo.size.height)
                 .scaleEffect(scale, anchor: .topLeading)
                 .frame(width: geo.size.width, height: emulated ? short * scale : geo.size.height, alignment: .topLeading)
+                // Край своего альбомного экрана — как край дисплея: что за него уходит (низ руки),
+                // не рисуется поверх чёрных полей, и снимок совпадает с тем, что видно на iPad.
+                .clipShape(ScreenEdge(active: emulated))
                 .frame(width: geo.size.width, height: geo.size.height)
         }
         .background { if emulated { Color.black } }
@@ -127,5 +130,15 @@ private struct DemoLandscape<Content: View>: View {
             Diagnostics.log("Окно не повернулось (\(error.localizedDescription)) — альбомный экран рисуем сами")
             Task { @MainActor in emulated.wrappedValue = true }
         }
+    }
+}
+
+/// Обрезка по кадру, которую можно выключить, не пересоздавая содержимое: выключенная
+/// (окно повернула система) ничего не обрезает — фон стола по-прежнему уходит под строку состояния.
+private struct ScreenEdge: Shape {
+    let active: Bool
+
+    func path(in rect: CGRect) -> Path {
+        Path(active ? rect : rect.insetBy(dx: -rect.width, dy: -rect.height))
     }
 }

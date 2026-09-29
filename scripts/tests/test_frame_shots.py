@@ -24,7 +24,13 @@ def load():
     return module
 
 
+# Подписи рисуются системным шрифтом: на машине без него (другой образ CI) такие тесты
+# пропускаются, а не падают. Отказы по числу и размеру кадров шрифта не требуют.
+HAVE_FONT = HAVE_PIL and any(os.path.exists(path) for path in load().FONTS)
+
+
 @unittest.skipUnless(HAVE_PIL, "нужен Pillow")
+@unittest.skipUnless(HAVE_FONT, "нет жирного шрифта с кириллицей из FONTS")
 class WrapTest(unittest.TestCase):
     def setUp(self):
         self.fs = load()
@@ -80,6 +86,7 @@ class FrameTest(unittest.TestCase):
         finally:
             sys.argv = argv
 
+    @unittest.skipUnless(HAVE_FONT, "нет жирного шрифта с кириллицей из FONTS")
     def test_iphone_and_ipad_sizes(self):
         for kind, raw_size, want in (("iphone", (1320, 2868), (1320, 2868)),
                                      ("ipad", (2064, 2752), (2064, 2752)),
@@ -89,8 +96,8 @@ class FrameTest(unittest.TestCase):
                 files = sorted(os.listdir(self.out))
                 self.assertEqual(files, ["01-%s-a.png" % kind, "02-%s-b.png" % kind])
                 for name in files:
-                    image = Image.open(os.path.join(self.out, name))
-                    self.assertEqual((image.size, image.mode), (want, "RGB"))
+                    with Image.open(os.path.join(self.out, name)) as image:
+                        self.assertEqual((image.size, image.mode), (want, "RGB"))
 
     def test_refuses_more_than_ten_frames(self):
         name = self.shot("a.png", (1320, 2868))
