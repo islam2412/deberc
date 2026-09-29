@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import DebercKit
 
 /// Панель справа на широком экране (iPad в альбомной ориентации): живая запись партии —
@@ -199,38 +200,49 @@ struct PersonaPanel: View {
                 .ignoresSafeArea()
                 .onTapGesture(perform: onClose)
                 .accessibilityHidden(true)
-            VStack(spacing: 12) {
-                PersonaAvatarView(persona: persona, size: 96)
-                    .shadow(color: Color.black.opacity(0.35), radius: 8, x: 0, y: 4)
-                Text(persona.name)
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(Theme.tableText)
-                HStack(spacing: 8) {
-                    LevelStarsView(level: persona.level, size: 13)
-                    Text("\(persona.level.title) · \(persona.style.title)")
-                        .font(Theme.Typography.label)
-                        .foregroundStyle(Theme.tableSecondaryText)
+            // При крупном системном тексте рассказ о сопернике может не поместиться — тогда прокрутка.
+            ViewThatFits(in: .vertical) {
+                content
+                ScrollView(showsIndicators: false) {
+                    content
                 }
-                Text(persona.bio)
-                    .font(.body)
-                    .foregroundStyle(Theme.tableText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(recordText)
-                    .font(Theme.Typography.label)
-                    .foregroundStyle(Theme.gold)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Закрыть", action: onClose)
-                    .buttonStyle(TableButtonStyle(prominent: true))
-                    .padding(.top, 4)
             }
-            .padding(24)
             .frame(maxWidth: 380)
             .modalCard(cornerRadius: 26)
             .padding(24)
-            .accessibilityElement(children: .contain)
+            .modalPanelAccessibility(onClose: onClose)
         }
+    }
+
+    private var content: some View {
+        VStack(spacing: 12) {
+            PersonaAvatarView(persona: persona, size: 96)
+                .shadow(color: Color.black.opacity(0.35), radius: 8, x: 0, y: 4)
+            Text(persona.name)
+                .font(.title2.weight(.bold))
+                .foregroundStyle(Theme.tableText)
+                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: 8) {
+                LevelStarsView(level: persona.level, size: 13)
+                Text("\(persona.level.title) · \(persona.style.title)")
+                    .font(Theme.Typography.label)
+                    .foregroundStyle(Theme.tableSecondaryText)
+            }
+            Text(persona.bio)
+                .font(.body)
+                .foregroundStyle(Theme.tableText)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(recordText)
+                .font(Theme.Typography.label)
+                .foregroundStyle(Theme.gold)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Закрыть", action: onClose)
+                .buttonStyle(TableButtonStyle(prominent: true))
+                .padding(.top, 4)
+        }
+        .padding(24)
     }
 
     private var recordText: String {
@@ -245,8 +257,25 @@ struct PersonaPanel: View {
 struct LastTrickPanel: View {
     let trick: Trick
     let names: [String]
-    let cardWidth: CGFloat
+    /// Самая крупная ширина карты: как в руке, но не больше 110.
+    let maxCardWidth: CGFloat
+    /// Ширина окна: втроём три колонки с картами должны поместиться вместе с полями карточки.
+    let screenWidth: CGFloat
     let onClose: () -> Void
+
+    /// Поля вокруг карточки: на телефоне уже, чтобы трём картам хватило места.
+    private var outerPadding: CGFloat { screenWidth < 400 ? 12 : 24 }
+    private let innerPadding: CGFloat = 22
+    private let columnSpacing: CGFloat = 12
+
+    /// Ширина карты — по свободному месту: окно минус поля, промежутки и запас колонки (8 pt) на каждую карту.
+    /// Втроём: 393 pt — (393 − 24 − 44 − 24) / 3 − 8 = 92; 375 — 86; 320 — 68; 430 (поля 24) — 96;
+    /// вдвоём и на iPad — до 110. Раньше колонки были по 118 pt и втроём карточка выходила за края экрана.
+    private var cardWidth: CGFloat {
+        let n = CGFloat(max(1, trick.plays.count))
+        let room = screenWidth - 2 * outerPadding - 2 * innerPadding - (n - 1) * columnSpacing
+        return max(56, min(maxCardWidth, (room / n - 8).rounded(.down)))
+    }
 
     var body: some View {
         ZStack {
@@ -258,7 +287,8 @@ struct LastTrickPanel: View {
                 Text("Последняя взятка")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(Theme.tableText)
-                HStack(alignment: .top, spacing: 12) {
+                    .accessibilityAddTraits(.isHeader)
+                HStack(alignment: .top, spacing: columnSpacing) {
                     ForEach(Array(trick.plays.enumerated()), id: \.offset) { index, play in
                         playColumn(index: index, play: play)
                     }
@@ -271,10 +301,10 @@ struct LastTrickPanel: View {
                 Button("Закрыть", action: onClose)
                     .buttonStyle(TableButtonStyle(prominent: true))
             }
-            .padding(22)
+            .padding(innerPadding)
             .modalCard(cornerRadius: 24)
-            .padding(24)
-            .accessibilityElement(children: .contain)
+            .padding(outerPadding)
+            .modalPanelAccessibility(onClose: onClose)
         }
     }
 
@@ -303,6 +333,17 @@ struct LastTrickPanel: View {
 }
 
 extension View {
+    /// Карточка поверх стола для VoiceOver — как окно: карты руки за затемнением недоступны
+    /// (иначе с них можно было сходить при игре на паузе), жест «назад» закрывает, фокус переходит на карточку.
+    func modalPanelAccessibility(onClose: @escaping () -> Void) -> some View {
+        accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape, onClose)
+            .onAppear {
+                UIAccessibility.post(notification: .screenChanged, argument: nil)
+            }
+    }
+
     /// Плотная карточка поверх стола (карточка соперника, последняя взятка): как окно итогов,
     /// без «стекла» — сквозь него просвечивал стол, и текст читался плохо.
     func modalCard(cornerRadius: CGFloat) -> some View {

@@ -119,7 +119,9 @@ struct SeatAvatar: View {
         .overlay(alignment: .bottom) {
             if isDealer {
                 // Шрифт — по размеру аватара, а не системного текста: иначе отметка наезжает на счёт.
-                DealerTag(fontSize: max(10, (size * 0.23).rounded()))
+                // Не мельче 12 pt (при аватаре 48 в крупном режиме — 13): кто сдаёт, важно — от этого обязы.
+                // «сдаёт» 12 pt с полями ≈ 49 pt при аватаре 42 — выступает по 3–4 pt в поля плашки, не до счёта.
+                DealerTag(fontSize: max(12, (size * 0.27).rounded()))
                     .offset(y: size * 0.2)
             }
         }
@@ -201,8 +203,6 @@ struct SeatPlate: View {
     let info: SeatInfo
     let avatarSize: CGFloat
     var maxWidth: CGFloat = 220
-    /// Звёзды уровня рядом с именем (в тесной полосе их можно не показывать).
-    var showsStars = true
     /// Касание плашки — карточка соперника.
     var onTap: (() -> Void)? = nil
 
@@ -228,24 +228,28 @@ struct SeatPlate: View {
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .onTapGesture { onTap?() }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(info.name)
+        .accessibilityLabel(spokenName)
         .accessibilityValue(info.spokenValue)
-        .accessibilityHint(personaHint)
+        // Подсказка говорит, что будет по касанию; характер и манера игры — в самой карточке.
+        .accessibilityHint(onTap == nil ? "" : "Открыть карточку соперника")
         .accessibilityAddTraits(onTap == nil ? [] : .isButton)
+        .accessibilityAction { onTap?() }
     }
 
-    /// Характер соперника: уровень и манера игры.
-    private var personaHint: String {
-        guard let persona = info.persona else { return "" }
-        return "\(persona.level.title). \(persona.bio)"
+    /// Имя и уровень (звёзды на экране): «Саша, любитель».
+    private var spokenName: String {
+        guard let level = info.persona?.level else { return info.name }
+        return "\(info.name), \(level.title.lowercased())"
     }
 
+    /// Имя и звёзды уровня; тесно — одно имя.
     private var nameLine: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 6) {
                 nameText
-                if showsStars, let level = info.persona?.level {
-                    LevelStarsView(level: level, size: 9)
+                if let level = info.persona?.level {
+                    // По аватару: 10 pt на телефоне, 12 — в крупном режиме, 13–15 — на iPad.
+                    LevelStarsView(level: level, size: (avatarSize * 0.24).rounded())
                 }
             }
             nameText
@@ -628,6 +632,9 @@ struct TrumpBadge: View {
     let height: CGFloat
     /// Узкий вариант для тесной верхней полосы: только масть (или круг торговли).
     var compact: Bool = false
+    /// Сдача на обязах. Без подробности «играет …» (вдвоём) над мастью пишется «обязы» вместо «козырь»:
+    /// после «печати» и первой карты это больше нигде не видно.
+    var forced: Bool = false
     @Environment(\.dynamicTypeSize) private var typeSize
 
     /// Две строки подписи помещаются в полосу только при обычных размерах текста.
@@ -663,7 +670,7 @@ struct TrumpBadge: View {
                 VStack(alignment: .leading, spacing: 0) {
                     if detail == nil && twoLines {
                         // Без «играет …» — подсказать, что это за масть.
-                        Text("козырь")
+                        Text(forced ? "обязы" : "козырь")
                             .font(Theme.Typography.caption)
                             .foregroundStyle(Theme.tableSecondaryText)
                     }
@@ -705,12 +712,57 @@ struct TrumpBadge: View {
 
     private var spoken: String {
         if let trump {
-            return "Козырь \(trump.name)" + (detail.map { ", \($0)" } ?? "")
+            let forcedNote = forced && detail == nil ? ", обязы" : ""
+            return "Козырь \(trump.name)" + forcedNote + (detail.map { ", \($0)" } ?? "")
         }
         switch biddingRound {
         case 2: return "Торговля, второй круг"
         case 0: return "Все спасовали, пересдача"
         default: return "Торговля, первый круг"
         }
+    }
+
+    /// Ширина самого широкого варианта без подробности (масть с подписью или «Торговля»):
+    /// по ней стол заранее решает, поместится ли вдвоём соперник в одну полосу с меню и козырем.
+    static func estimatedWidth(_ text: TableTextMetrics, height: CGFloat) -> CGFloat {
+        let twoLines = !text.typeSize.isAccessibilitySize
+        let suits = Suit.allCases.map { text.width(TableText.suitTitle($0), .label) }.max() ?? 0
+        let trumpLines = twoLines
+            ? max(suits, text.width("козырь", .caption), text.width("обязы", .caption))
+            : suits
+        let rounds = ["1-й круг", "2-й круг", "все пас"].map { text.width($0, twoLines ? .caption : .label) }.max() ?? 0
+        let bidding = twoLines ? max(text.width("Торговля", .label), rounds) : rounds
+        return 16 + max(min(30, height - 16) + 6 + trumpLines, bidding)
+    }
+}
+
+/// Висячие очки или пересдачи до обязов — золотом под индикатором козыря. На iPhone их больше
+/// нигде нет, а вертикальную надпись у края стола пожилому игроку не прочесть, не наклонив голову.
+struct PotChip: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(Theme.Typography.caption)
+            .foregroundStyle(Theme.gold)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .tableSurface(cornerRadius: 10)
+            .accessibilityHidden(true)
+    }
+
+    /// «висят 40» или «пересдач 1 из 2» (nil — показывать нечего).
+    static func text(pot: Int, redeals: Int, forcedAfter: Int) -> String? {
+        if pot > 0 { return "висят \(pot)" }
+        if redeals > 0 && forcedAfter > 0 { return "пересдач \(redeals) из \(forcedAfter)" }
+        return nil
+    }
+
+    /// Ширина с висячими очками — для заранее рассчитанной верхней полосы. Пересдачи подряд бывают редко,
+    /// их строка длиннее — тогда плашка соперника рядом на время ужимается (убирает звёзды и полоску).
+    static func estimatedWidth(_ text: TableTextMetrics) -> CGFloat {
+        text.width("висят 888", .caption) + 16
     }
 }
