@@ -107,12 +107,17 @@ struct GameView: View {
         let metrics = TableMetrics(size: size, playerCount: players, large: large, safeTop: safeTop,
                                    bottomInset: bottomInset, typeSize: tableType)
         // Окно итогов — под полосой меню: длинные итоги (втроём, с раскрытыми картами) не уходят под ≡.
-        let summaryTop = metrics.topPadding + metrics.topBarHeight
+        // Меню в ушке у выреза — полосы нет, окну достаётся вся высота под вырезом.
+        let summaryTop = metrics.earBar ? 4 : metrics.topPadding + metrics.topBarHeight
         ZStack {
             FeltBackground()
             if let match = store.match, let deal = match.deal {
                 TableScreen(match: match, deal: deal, metrics: metrics, commands: commands)
                     .dynamicTypeSize(tableType)
+                if metrics.earBar {
+                    earBar(match: match, deal: deal, metrics: metrics, safeTop: safeTop, trump: true)
+                        .dynamicTypeSize(tableType)
+                }
             } else {
                 ProgressView()
                     .tint(Theme.tableText)
@@ -129,10 +134,16 @@ struct GameView: View {
                     .padding(.top, summaryTop)
                     .transition(reduceMotion ? .opacity : .scale(scale: 0.92).combined(with: .opacity))
                     .zIndex(4)
-                summaryMenu(metrics: metrics)
-                    .dynamicTypeSize(tableType)
-                    .transition(.opacity)
-                    .zIndex(5)
+                Group {
+                    if metrics.earBar, let deal = match.deal {
+                        earBar(match: match, deal: deal, metrics: metrics, safeTop: safeTop, trump: false)
+                    } else {
+                        summaryMenu(metrics: metrics)
+                    }
+                }
+                .dynamicTypeSize(tableType)
+                .transition(.opacity)
+                .zIndex(5)
             }
             if showLastTrick, let trick = store.lastTrick {
                 LastTrickPanel(trick: trick, names: displayNames, maxCardWidth: min(110, metrics.handCardWidth),
@@ -165,6 +176,14 @@ struct GameView: View {
     private var displayNames: [String] {
         let count = store.match?.playerCount ?? 0
         return (0..<count).map { store.displayName(for: $0) }
+    }
+
+    /// Меню и козырь в ушках у выреза (`TableEarBar`): полоса в верхнем отступе, центр — посередине него.
+    /// Раскладка идёт от безопасной зоны, поэтому полоса сдвинута вверх на отступ.
+    private func earBar(match: Match, deal: Deal, metrics: TableMetrics, safeTop: CGFloat, trump: Bool) -> some View {
+        TableEarBar(match: match, deal: deal, metrics: metrics, commands: commands, trump: trump)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .offset(y: -(safeTop + metrics.earHeight) / 2)
     }
 
     /// Кнопка меню поверх окна итогов — на том же месте, что и в верхней полосе:
@@ -241,9 +260,12 @@ struct TableScreen: View {
     private var tableColumn: some View {
         VStack(spacing: metrics.spacing) {
             // Вдвоём соперник — в верхней полосе, между меню и козырем.
-            TableTopBar(match: match, deal: deal, metrics: metrics, commands: commands,
-                        opponent: match.playerCount == 2 ? seatInfo(leftSeat) : nil,
-                        canShowLastTrick: store.lastTrick != nil)
+            // Втроём с ушками у выреза полосы нет: меню и козырь — в ушках (`TableEarBar`).
+            if !(metrics.earBar && match.playerCount == 3) {
+                TableTopBar(match: match, deal: deal, metrics: metrics, commands: commands,
+                            opponent: match.playerCount == 2 ? seatInfo(leftSeat) : nil,
+                            canShowLastTrick: store.lastTrick != nil)
+            }
             if metrics.sideSeats {
                 HStack(alignment: .top, spacing: 12) {
                     SeatColumn(info: seatInfo(leftSeat), metrics: metrics, commands: commands,

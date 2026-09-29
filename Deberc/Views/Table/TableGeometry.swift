@@ -63,6 +63,18 @@ struct TableMetrics: Equatable {
     /// что сейчас на плашке: иначе полоса перескакивала бы на две строки посреди партии
     /// (счёт стал трёхзначным) и стол вдруг сжимался бы на 70 pt.
     let opponentInTopBar: Bool
+    /// iPhone с вырезом или Dynamic Island: строка состояния за столом скрыта, и меню с козырем стоят
+    /// в «ушках» по бокам выреза (`TableEarBar`). Полоса под вырезом не нужна — стол выше на 50–60 pt.
+    let earBar: Bool
+    /// Высота кнопок в ушках (центр — посередине верхнего отступа, там же центр острова).
+    /// Не выше 46 pt: у скруглённого угла экрана высокая кнопка задела бы край.
+    let earHeight: CGFloat
+    /// Ширина правого ушка под козырь: от выреза (с зазором 8 pt) до поля `earTrailing`.
+    let earWidth: CGFloat
+    /// Две строки подписи козыря помещаются в ушко по высоте.
+    let earTwoLines: Bool
+    static let earLeading: CGFloat = 16
+    static let earTrailing: CGFloat = 20
     let handCardWidth: CGFloat
     let fanCardWidth: CGFloat
     let pileCardWidth: CGFloat
@@ -137,6 +149,24 @@ struct TableMetrics: Equatable {
         opponentInTopBar = playerCount == 2
             && tableWidth - 2 * gutter >= menuSize + 4 * 8 + max(plateMin, (fanCap * 3.6).rounded()) + rightColumn
 
+        // Ушки: вырез есть, если верхний отступ большой (без строки состояния у iPhone без выреза он 0).
+        // Dynamic Island — 126 pt в ширину (при «Увеличенном» виде — пропорционально меньше); у него
+        // отступ ≥ 51 pt, а при «Увеличенном» виде — 0,15 ширины. Вырез — оценка сверху: до 56 % ширины.
+        let earBar = !roomy && safeTop >= 40
+        self.earBar = earBar
+        if earBar {
+            let island = safeTop >= 51 || safeTop / width >= 0.145
+            let cutout = island ? 126 * min(1, width / 393) : min(width * 0.56, 230)
+            let earHeight = min(46, safeTop - 13)
+            self.earHeight = earHeight
+            earWidth = max(0, ((width - cutout) / 2 - 8 - TableMetrics.earTrailing).rounded(.down))
+            earTwoLines = text.lineHeight(.caption) + text.lineHeight(.label) + 6 <= earHeight
+        } else {
+            earHeight = 0
+            earWidth = 0
+            earTwoLines = false
+        }
+
         let handUnderEdge = !roomy || wide
         let handVisible: CGFloat = handUnderEdge ? (roomy ? 0.75 : (large ? 0.66 : 0.72)) : 1
         let handRaise: CGFloat = handUnderEdge ? (bottomInset * 0.5).rounded() : 0
@@ -168,14 +198,17 @@ struct TableMetrics: Equatable {
             if sideSeats {
                 top = topBarHeight
             } else if playerCount == 3 {
-                top = topBarHeight + spacing + plate + spacing + max(fanSlotHeight, pileSlotHeight)
+                top = (earBar ? 0 : topBarHeight + spacing) + plate + spacing + max(fanSlotHeight, pileSlotHeight)
+            } else if earBar {
+                top = plate + 4 + fanSlotHeight
             } else if opponentInTopBar {
                 top = max(topBarHeight, plate + 4 + fanSlotHeight)
             } else {
                 top = topBarHeight + spacing + plate + 4 + fanSlotHeight
             }
             let strip = max(roomy ? 50 : 40, text.lineHeight(.score) + 8, 2 * text.lineHeight(.caption), tileHeight + 8)
-            let gaps = CGFloat(playerCount == 3 && !sideSeats ? 5 : 4) * spacing
+            // Промежутки колонки стола; втроём с ушками верхней полосы нет — на один меньше.
+            let gaps = CGFloat(playerCount == 3 && !sideSeats && !earBar ? 5 : 4) * spacing
             // Центр и рука вместе (рука — видимая часть карты, подъём выбранной и приподнятость над краем).
             let room = height + bottomInset - topPadding - top - strip - actionMinHeight - gaps - handRaise
             let handShare = handVisible * CardView.aspectRatio + liftShare

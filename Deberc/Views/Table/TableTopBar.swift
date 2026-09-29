@@ -19,7 +19,6 @@ struct TableCommands {
 /// у правого (`TableDecorations`); висячие очки и пересдачи — золотом под козырем (`PotChip`).
 struct TableTopBar: View {
     @EnvironmentObject private var store: GameStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let match: Match
     let deal: Deal
     let metrics: TableMetrics
@@ -28,12 +27,16 @@ struct TableTopBar: View {
     var opponent: SeatInfo? = nil
     var canShowLastTrick = false
 
-    /// Только что назначили козырь — индикатор ненадолго вспыхивает.
-    @State private var trumpFlash = false
-
     var body: some View {
         Group {
-            if let opponent {
+            if metrics.earBar {
+                // Меню и козырь — в ушках у выреза (`TableEarBar`); здесь вдвоём только соперник.
+                if let opponent {
+                    OpponentCluster(info: opponent, metrics: metrics, commands: commands,
+                                    canShowLastTrick: canShowLastTrick)
+                        .frame(maxWidth: .infinity)
+                }
+            } else if let opponent {
                 // Одна полоса или две — решено заранее по ширине окна и размеру текста (`opponentInTopBar`),
                 // а не по нынешнему счёту: полоса не перескакивает посреди партии. В одной полосе плашка
                 // сама убирает звёзды и полоску прогресса, если счёт длинный.
@@ -55,14 +58,6 @@ struct TableTopBar: View {
         // Смена варианта раскладки (козырь стал шире) — сразу, без затухания:
         // иначе на миг видны пустые стеклянные рамки.
         .transaction { $0.animation = nil }
-        .onChange(of: deal.trump) { trump in
-            guard trump != nil, !reduceMotion else { return }
-            trumpFlash = true
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 1_300_000_000)
-                trumpFlash = false
-            }
-        }
     }
 
     /// Вдвоём: меню, соперник, справа — козырь и под ним висячие очки (место есть: плашка с веером выше козыря).
@@ -77,6 +72,7 @@ struct TableTopBar: View {
             VStack(alignment: .trailing, spacing: 6) {
                 trumpBadge(detail: nil)
                     .fixedSize()
+                    .modifier(TrumpFlash(trump: deal.trump))
                 potChip
             }
         }
@@ -93,6 +89,7 @@ struct TableTopBar: View {
                 trumpBadge(detail: nil)
                 trumpBadge(detail: nil, compact: true)
             }
+            .modifier(TrumpFlash(trump: deal.trump))
         }
         .frame(height: metrics.topBarHeight)
     }
@@ -112,26 +109,24 @@ struct TableTopBar: View {
         }
     }
 
+    private var redeals: Int { Self.redeals(match: match, deal: deal) }
+
     /// Пересдачи подряд до обязов — пока идёт торговля: когда козырь взят (или сдача на обязах),
     /// обязов из этой серии уже не будет.
-    private var redeals: Int { deal.forced || deal.trump != nil ? 0 : match.allPassStreak }
+    static func redeals(match: Match, deal: Deal) -> Int {
+        deal.forced || deal.trump != nil ? 0 : match.allPassStreak
+    }
+
+    /// Круг торговли для индикатора: 1, 2; 0 — все спасовали; nil — торговля позади.
+    static func biddingRound(_ deal: Deal) -> Int? {
+        if case .bidding(let r) = deal.phase { return r }
+        return deal.allPassed ? 0 : nil
+    }
 
     private func trumpBadge(detail: String?, compact: Bool = false) -> some View {
-        let round: Int?
-        if case .bidding(let r) = deal.phase {
-            round = r
-        } else if deal.allPassed {
-            round = 0
-        } else {
-            round = nil
-        }
-        return TrumpBadge(trump: deal.trump, detail: detail, biddingRound: round,
-                          height: metrics.topBarHeight, compact: compact, forced: deal.forced)
-            .scaleEffect(trumpFlash ? 1.1 : 1, anchor: .trailing)
-            .shadow(color: Theme.gold.opacity(trumpFlash ? 0.75 : 0), radius: trumpFlash ? 10 : 0)
-            .animation(trumpFlash ? .spring(response: 0.3, dampingFraction: 0.55) : .easeOut(duration: 0.45),
-                       value: trumpFlash)
-            .accessibilityValue(matchSpoken)
+        TrumpBadge(trump: deal.trump, detail: detail, biddingRound: Self.biddingRound(deal),
+                   height: metrics.topBarHeight, compact: compact, forced: deal.forced)
+            .accessibilityValue(Self.matchSpoken(match: match, deal: deal))
     }
 
     private var trumpDetail: String? {
@@ -142,16 +137,110 @@ struct TableTopBar: View {
 
     /// Номер сдачи, цель партии, висячие очки и пересдачи до обязов — для VoiceOver
     /// (на экране — вертикальная надпись у края стола и золотая строка под козырем).
-    private var matchSpoken: String {
+    static func matchSpoken(match: Match, deal: Deal) -> String {
         var parts = ["сдача \(max(1, match.dealCount))", "партия до \(match.rules.targetScore)"]
         if match.pot > 0 {
             parts.append("висят \(match.pot) \(TableText.plural(match.pot, "очко", "очка", "очков"))")
         }
         let forcedAfter = match.rules.forcedDealAfterRedeals
+        let redeals = redeals(match: match, deal: deal)
         if redeals > 0 && forcedAfter > 0 {
             parts.append("пересдач \(redeals) из \(forcedAfter), дальше обязы")
         }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// Только что назначили козырь — индикатор ненадолго вспыхивает золотом.
+struct TrumpFlash: ViewModifier {
+    let trump: Suit?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var flash = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(flash ? 1.1 : 1, anchor: .trailing)
+            .shadow(color: Theme.gold.opacity(flash ? 0.75 : 0), radius: flash ? 10 : 0)
+            .animation(flash ? .spring(response: 0.3, dampingFraction: 0.55) : .easeOut(duration: 0.45),
+                       value: flash)
+            .onChange(of: trump) { trump in
+                guard trump != nil, !reduceMotion else { return }
+                flash = true
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 1_300_000_000)
+                    flash = false
+                }
+            }
+    }
+}
+
+/// Меню и козырь в «ушках» по бокам выреза или Dynamic Island (`TableMetrics.earBar`): строка состояния
+/// за столом скрыта, место по бокам выреза иначе пустовало бы, а полоса под вырезом отнимала бы у стола
+/// 50–60 pt. Меню — слева; справа — козырь в ширину ушка, висячие очки — золотой строкой в нём же
+/// (не помещается и она — золотым числом на уголке). Центр полосы — посередине верхнего отступа.
+/// `trump: false` — только меню (поверх окна итогов, на том же месте).
+struct TableEarBar: View {
+    let match: Match
+    let deal: Deal
+    let metrics: TableMetrics
+    let commands: TableCommands
+    var trump = true
+
+    var body: some View {
+        HStack(spacing: 0) {
+            TableMenuButton(commands: commands, size: min(44, metrics.earHeight))
+            Spacer(minLength: 0)
+            if trump {
+                indicator
+                    .frame(maxWidth: metrics.earWidth, alignment: .trailing)
+                    .modifier(TrumpFlash(trump: deal.trump))
+            }
+        }
+        .padding(.leading, TableMetrics.earLeading)
+        .padding(.trailing, TableMetrics.earTrailing)
+        .frame(height: metrics.earHeight)
+    }
+
+    private var pot: String? {
+        PotChip.text(pot: match.pot, redeals: TableTopBar.redeals(match: match, deal: deal),
+                     forcedAfter: match.rules.forcedDealAfterRedeals)
+    }
+
+    private var indicator: some View {
+        ViewThatFits(in: .horizontal) {
+            if metrics.earTwoLines {
+                badge(note: pot, twoLines: true)
+                if pot != nil {
+                    badge(note: nil, twoLines: true).overlay(alignment: .bottomLeading) { potDot }
+                }
+            }
+            badge(note: nil, twoLines: false).overlay(alignment: .bottomLeading) { potDot }
+            badge(note: nil, twoLines: false, compact: true).overlay(alignment: .bottomLeading) { potDot }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(TableTopBar.matchSpoken(match: match, deal: deal))
+    }
+
+    private func badge(note: String?, twoLines: Bool, compact: Bool = false) -> some View {
+        TrumpBadge(trump: deal.trump, detail: nil, biddingRound: TableTopBar.biddingRound(deal),
+                   height: metrics.earHeight + 6, compact: compact, forced: deal.forced,
+                   note: note, twoLinesOverride: twoLines)
+            .fixedSize()
+    }
+
+    /// Висячие очки числом на уголке — когда строкой они в ушко не влезают.
+    @ViewBuilder
+    private var potDot: some View {
+        if match.pot > 0 {
+            Text("\(match.pot)")
+                .font(.caption2.weight(.bold).monospacedDigit())
+                .foregroundStyle(Theme.feltEdge)
+                .padding(.horizontal, 5)
+                .frame(minWidth: 18, minHeight: 18)
+                .background(Capsule().fill(Theme.gold))
+                .offset(x: -6, y: 6)
+                .accessibilityHidden(true)
+        }
     }
 }
 

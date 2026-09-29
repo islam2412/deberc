@@ -640,17 +640,23 @@ struct TrumpBadge: View {
     /// Сдача на обязах. Без подробности «играет …» (вдвоём) над мастью пишется «обязы» вместо «козырь»:
     /// после «печати» и первой карты это больше нигде не видно.
     var forced: Bool = false
+    /// Висячие очки или пересдачи золотом — верхней строкой вместо «козырь» или «Торговля»
+    /// (в ушке у выреза, где отдельной плашке `PotChip` места нет).
+    var note: String? = nil
+    /// Две строки подписи или одна; nil — две, если текст не из самых крупных.
+    var twoLinesOverride: Bool? = nil
     @Environment(\.dynamicTypeSize) private var typeSize
 
     /// Две строки подписи помещаются в полосу только при обычных размерах текста.
-    private var twoLines: Bool { !typeSize.isAccessibilitySize }
+    private var twoLines: Bool { twoLinesOverride ?? !typeSize.isAccessibilitySize }
 
-    private var badgeSize: CGFloat { min(30, height - 16) }
+    /// Узкий вариант — одна масть: кружок крупнее, его и читают.
+    private var badgeSize: CGFloat { compact && trump != nil ? min(36, height - 16) : min(30, height - 16) }
 
     var body: some View {
         content
             .padding(.horizontal, compact ? 6 : 8)
-            .padding(.vertical, 4)
+            .padding(.vertical, 3)
             .frame(height: height - 6)
             .tableSurface(cornerRadius: 14, highlighted: trump != nil)
             .accessibilityElement(children: .ignore)
@@ -673,7 +679,11 @@ struct TrumpBadge: View {
             HStack(spacing: 6) {
                 SuitBadge(suit: trump, size: badgeSize)
                 VStack(alignment: .leading, spacing: 0) {
-                    if detail == nil && twoLines {
+                    if let note, detail == nil && twoLines {
+                        Text(note)
+                            .font(Theme.Typography.caption)
+                            .foregroundStyle(Theme.gold)
+                    } else if detail == nil && twoLines {
                         // Без «играет …» — подсказать, что это за масть.
                         Text(forced ? "обязы" : "козырь")
                             .font(Theme.Typography.caption)
@@ -693,7 +703,11 @@ struct TrumpBadge: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 0) {
-                if twoLines {
+                if let note, twoLines {
+                    Text(note)
+                        .font(Theme.Typography.caption)
+                        .foregroundStyle(Theme.gold)
+                } else if twoLines {
                     Text("Торговля")
                         .font(Theme.Typography.label)
                         .foregroundStyle(Theme.tableText)
